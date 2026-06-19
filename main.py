@@ -30,7 +30,6 @@ DB_PATH      = "bot.db"
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Qidiruv natijalari URLlarini vaqtincha saqlash
 search_cache: dict = {}
 
 bot    = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
@@ -102,15 +101,23 @@ async def guard(message: Message) -> bool:
         return False
     return True
 
-# ── YT-DLP UMUMIY SOZLAMALAR (YouTube bot detection'dan o'tish) ──
+# ── YT-DLP UMUMIY SOZLAMALAR ──
 YT_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept-Language": "en-US,en;q=0.9",
 }
 
+def fmt_duration(dur) -> str:
+    if not dur:
+        return "?"
+    try:
+        dur = int(dur)
+    except (ValueError, TypeError):
+        return "?"
+    return f"{dur // 60}:{dur % 60:02d}"
+
 # ── YUKLAB OLISH ──────────────────────────────
-def search_songs(query: str, count: int = 15) -> list:
-    """Qo'shiq nomini qidirib, natijalar ro'yxatini qaytaradi (yuklamasdan)."""
+def search_songs(query: str, count: int = 10) -> list:
     ydl_opts = {
         "quiet": True,
         "no_warnings": True,
@@ -134,7 +141,6 @@ def search_songs(query: str, count: int = 15) -> list:
         return results
 
 def download_mp3(query: str, out_dir: Path) -> dict:
-    """Qo'shiq nomi yoki URL bo'yicha MP3 yuklab oladi."""
     is_url = query.startswith("http")
     search = query if is_url else f"ytsearch1:{query}"
     ydl_opts = {
@@ -317,9 +323,34 @@ async def cb_check(cb: CallbackQuery):
             "🎤 Audio → tanib yuklab beraman"
         )
 
+# ── QIDIRUV NATIJALARI (raqamli ro'yxat uslubida) ──
+def build_results_text(query: str, results: list) -> str:
+    lines = [f"🔍 {query}", ""]
+    for i, r in enumerate(results, start=1):
+        dur_str = fmt_duration(r["duration"])
+        lines.append(f"{i}. {r['title']}  {dur_str}")
+    return "\n".join(lines)
+
+def build_results_kb(count: int) -> InlineKeyboardMarkup:
+    num_rows = []
+    row = []
+    for i in range(1, count + 1):
+        row.append(InlineKeyboardButton(text=str(i), callback_data=f"dl_{i-1}"))
+        if len(row) == 5:
+            num_rows.append(row)
+            row = []
+    if row:
+        num_rows.append(row)
+    num_rows.append([InlineKeyboardButton(text="❌ Yopish", callback_data="nav_close")])
+    return InlineKeyboardMarkup(inline_keyboard=num_rows)
+
+@router.callback_query(F.data == "nav_close")
+async def cb_nav_close(cb: CallbackQuery):
+    await cb.answer()
+    await cb.message.delete()
+
 @router.callback_query(F.data.startswith("dl_"))
 async def cb_download_song(cb: CallbackQuery):
-    """Foydalanuvchi tanlagan qo'shiqni yuklab beradi."""
     uid = cb.from_user.id
     idx = int(cb.data.removeprefix("dl_"))
     urls = search_cache.get(uid, [])
@@ -339,8 +370,6 @@ async def cb_download_song(cb: CallbackQuery):
                 performer=aud["artist"],
             )
             await msg.delete()
-        await cb.message.delete()
-        search_cache.pop(uid, None)
     except Exception as e:
         logger.exception(e)
         await msg.edit_text("❌ Yuklab bo'lmadi.")
@@ -354,7 +383,6 @@ async def h_text(message: Message):
     url  = URL_RE.search(text)
 
     if url:
-        # Link → video + MP3
         msg = await message.answer("⬇️ Yuklanmoqda…")
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
@@ -365,7 +393,6 @@ async def h_text(message: Message):
                     title=aud["title"],
                     performer=aud["artist"],
                 )
-                # Video (50MB dan kichik bo'lsa)
                 try:
                     vid = download_video(url.group(), Path(tmpdir))
                     if vid and Path(vid).exists():
@@ -379,27 +406,18 @@ async def h_text(message: Message):
             logger.exception(e)
             await msg.edit_text("❌ Yuklab bo'lmadi.")
     else:
-        # Matn → qidirish va natijalarni ko'rsatish
         msg = await message.answer(f"🔍 <b>{text}</b> qidirilmoqda…")
         try:
-            results = search_songs(text, count=15)
+            results = search_songs(text, count=10)
             if not results:
                 await msg.edit_text("❌ Qo'shiq topilmadi.")
                 return
 
-            btns = []
-            for i, r in enumerate(results[:15]):
-                dur = r["duration"]
-                dur_str = f"{dur // 60}:{dur % 60:02d}" if dur else "?"
-                title_short = r["title"][:40] + "…" if len(r["title"]) > 40 else r["title"]
-                btns.append([InlineKeyboardButton(
-                    text=f"🎵 {title_short} [{dur_str}]",
-                    callback_data=f"dl_{i}"
-                )])
+            body = build_results_text(text, results)
+            kb = build_results_kb(len(results))
+            await msg.edit_text(body, reply_markup=kb)
 
-            header = f"🎵 <b>'{text}'</b> bo'yicha {len(results[:15])} ta natija:\n\nBirini tanlang:"
-            await msg.edit_text(header, reply_markup=InlineKeyboardMarkup(inline_keyboard=btns))
-            search_cache[message.from_user.id] = [r["url"] for r in results[:15]]
+            search_cache[message.from_user.id] = [r["url"] for r in results]
 
         except Exception as e:
             logger.exception(e)
