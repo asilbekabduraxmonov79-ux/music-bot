@@ -145,12 +145,15 @@ def download_mp3(query: str, out_dir: Path) -> dict:
     search = query if is_url else f"ytsearch1:{query}"
     ydl_opts = {
         "outtmpl": str(out_dir / "%(title)s.%(ext)s"),
-        "format": "bestaudio[ext=m4a]/bestaudio/best",
+        "format": "bestaudio/best",
         "postprocessors": [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3",
             "preferredquality": "192",
         }],
+        "postprocessor_args": {
+            "ffmpeg": ["-ar", "44100"],
+        },
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
@@ -158,16 +161,22 @@ def download_mp3(query: str, out_dir: Path) -> dict:
         "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
         "match_filter": yt_dlp.utils.match_filter_func("!is_live"),
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(search, download=True)
-        if "entries" in info:
-            info = info["entries"][0]
-        filename = ydl.prepare_filename(info)
-        mp3 = str(Path(filename).with_suffix(".mp3"))
-        if not Path(mp3).exists():
-            for f in Path(out_dir).glob("*.mp3"):
-                mp3 = str(f)
-                break
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(search, download=True)
+    except yt_dlp.utils.DownloadError:
+        # Ffprobe audio kodekni topa olmasa — video formatdan to'g'ridan-to'g'ri MP3 chiqaramiz
+        ydl_opts["format"] = "best"
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(search, download=True)
+    if "entries" in info:
+        info = info["entries"][0]
+    filename = ydl.prepare_filename(info)
+    mp3 = str(Path(filename).with_suffix(".mp3"))
+    if not Path(mp3).exists():
+        for f in Path(out_dir).glob("*.mp3"):
+            mp3 = str(f)
+            break
     return {
         "title":    info.get("title", "Noma'lum"),
         "artist":   info.get("uploader", ""),
