@@ -254,13 +254,18 @@ YT_HEADERS = {
 YOUTUBE_COOKIES_FILE = "youtube_cookies.txt"
 
 def _write_cookies_from_env():
-    """YOUTUBE_COOKIES_CONTENT env var orqali yuborilgan cookies matnini
-    faylga yozadi (Render kabi platformalarda fayl yuklash mumkin emas,
-    shu sababli matnni environment variable orqali olamiz)."""
-    content = os.environ.get("YOUTUBE_COOKIES_CONTENT")
-    if content:
-        Path(YOUTUBE_COOKIES_FILE).write_text(content)
+    """YOUTUBE_COOKIES_CONTENT va INSTAGRAM_COOKIES_CONTENT env varlar orqali
+    yuborilgan cookies matnlarini faylga yozadi (Render kabi platformalarda
+    fayl yuklash mumkin emas, shu sababli matnni environment variable orqali olamiz)."""
+    yt_content = os.environ.get("YOUTUBE_COOKIES_CONTENT")
+    if yt_content:
+        Path(YOUTUBE_COOKIES_FILE).write_text(yt_content)
         logger.info("YouTube cookies YOUTUBE_COOKIES_CONTENT dan yozildi.")
+
+    ig_content = os.environ.get("INSTAGRAM_COOKIES_CONTENT")
+    if ig_content:
+        Path(INSTAGRAM_COOKIES_FILE).write_text(ig_content)
+        logger.info("Instagram cookies INSTAGRAM_COOKIES_CONTENT dan yozildi.")
 
 _write_cookies_from_env()
 
