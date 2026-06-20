@@ -220,7 +220,7 @@ def download_mp3(query: str, out_dir: Path) -> dict:
 def download_video(url: str, out_dir: Path) -> str:
     ydl_opts = {
         "outtmpl": str(out_dir / "%(title)s.%(ext)s"),
-        "format": "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best",
+        "format": "(bestvideo+bestaudio/best)[vcodec!=none]",
         "merge_output_format": "mp4",
         "quiet": True,
         "no_warnings": True,
@@ -236,7 +236,8 @@ def download_video(url: str, out_dir: Path) -> str:
             for f in Path(out_dir).glob("*.mp4"):
                 mp4 = str(f)
                 break
-        # Faylda video oqimi borligini tekshiramiz (audio-only bo'lib qolmaganmi)
+        # Faylda video oqimi borligini tekshiramiz
+        has_video = True
         if Path(mp4).exists():
             try:
                 import subprocess
@@ -245,10 +246,12 @@ def download_video(url: str, out_dir: Path) -> str:
                      "-show_entries", "stream=codec_type", "-of", "csv=p=0", mp4],
                     capture_output=True, text=True, timeout=10,
                 )
-                if "video" not in probe.stdout:
-                    logger.warning(f"download_video: faylda video oqimi yo'q -> {mp4}")
+                has_video = "video" in probe.stdout
+                logger.info(f"download_video: {mp4} | video stream bor: {has_video}")
             except Exception as pe:
                 logger.warning(f"ffprobe tekshirishda xato: {pe}")
+        if not has_video:
+            raise yt_dlp.utils.DownloadError("Faylda video oqimi topilmadi (audio-only)")
         return mp4
 
 async def recognize_audio(file_path: str) -> dict:
