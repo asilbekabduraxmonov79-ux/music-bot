@@ -1074,10 +1074,28 @@ async def h_doc(message: Message):
         await _handle_audio(message, message.document.file_id)
 
 # ── ISHGA TUSHIRISH ───────────────────────────
+async def _start_dummy_web_server():
+    """Render.com Web Service uchun: portni tinglovchi minimal HTTP server.
+    Bot ishi polling orqali davom etadi, bu server faqat 'tirikman' signali beradi."""
+    from aiohttp import web
+
+    async def health(_request):
+        return web.Response(text="Bot ishlayapti ✅")
+
+    app = web.Application()
+    app.router.add_get("/", health)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 10000))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logger.info(f"Dummy web server {port}-portda ishga tushdi (Render health check uchun)")
+
 async def main():
     db_init()
     cleanup_old_files(max_age_hours=1)  # boshlanishda bir marta tozalash
     asyncio.create_task(periodic_cleanup())
+    asyncio.create_task(_start_dummy_web_server())
     logger.info("Bot ishga tushdi ✅")
     await dp.start_polling(bot)
 
