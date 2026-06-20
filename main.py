@@ -25,6 +25,11 @@ AUDD_TOKEN   = "test"
 DOWNLOAD_DIR = Path("downloads")
 DOWNLOAD_DIR.mkdir(exist_ok=True)
 DB_PATH      = "bot.db"
+# Instagram'dan video yuklash uchun cookies fayli (ixtiyoriy).
+# Brauzerdan Instagram'ga login qilib, "Get cookies.txt" kengaytmasi bilan
+# eksport qilib, shu nomdagi faylga joylashtiring. Fayl bo'lmasa muammo emas,
+# kod cookies'siz ham ishlashga harakat qiladi.
+INSTAGRAM_COOKIES_FILE = "instagram_cookies.txt"
 # ══════════════════════════════════════════════
 
 logging.basicConfig(level=logging.INFO)
@@ -149,6 +154,9 @@ def fmt_duration(dur) -> str:
         return "?"
     return f"{dur // 60}:{dur % 60:02d}"
 
+def is_instagram_url(url: str) -> bool:
+    return "instagram.com" in url.lower()
+
 # ── YUKLAB OLISH ──────────────────────────────
 def search_songs(query: str, count: int = 10) -> list:
     ydl_opts = {
@@ -191,9 +199,12 @@ def download_mp3(query: str, out_dir: Path) -> dict:
         "no_warnings": True,
         "noplaylist": True,
         "http_headers": YT_HEADERS,
-        "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
         "match_filter": yt_dlp.utils.match_filter_func("!is_live"),
     }
+    if is_url and is_instagram_url(search) and Path(INSTAGRAM_COOKIES_FILE).exists():
+        ydl_opts["cookiefile"] = INSTAGRAM_COOKIES_FILE
+    if not is_url or not is_instagram_url(search):
+        ydl_opts["extractor_args"] = {"youtube": {"player_client": ["android", "web"]}}
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(search, download=True)
@@ -217,42 +228,96 @@ def download_mp3(query: str, out_dir: Path) -> dict:
         "path":     mp3,
     }
 
+def _probe_has_video(path: str) -> bool:
+    """Faylda haqiqiy video oqimi (rasm-thumbnail emas) borligini tekshiradi."""
+    try:
+        import subprocess
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v",
+             "-show_entries", "stream=codec_type", "-of", "csv=p=0", path],
+            capture_output=True, text=True, timeout=10,
+        )
+        return "video" in probe.stdout
+    except Exception as pe:
+        logger.warning(f"ffprobe tekshirishda xato: {pe}")
+        return True  # tekshira olmasak, bloklamaymiz
+
 def download_video(url: str, out_dir: Path) -> str:
-    ydl_opts = {
+    instagram = is_instagram_url(url)
+
+    base_opts = {
         "outtmpl": str(out_dir / "%(title)s.%(ext)s"),
-        "format": "(bestvideo+bestaudio/best)[vcodec!=none]",
         "merge_output_format": "mp4",
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
         "http_headers": YT_HEADERS,
-        "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        filename = ydl.prepare_filename(info)
+
+    if instagram:
+        # Instagram'da odatda video+audio bitta formatda keladi.
+        # "bestvideo+bestaudio" majburlash ko'pincha mos format topa olmay,
+        # yt-dlp'ni faqat audio-only formatga qaytarishga majbur qiladi.
+        # Shu sababli "best" ishlatamiz va vcodec!=none bo'lgan formatlarga
+        # ustunlik beramiz.
+        ydl_opts = {
+            **base_opts,
+            "format": "best[vcodec!=none]/best",
+        }
+        # Agar cookies fayli mavjud bo'lsa, ulaymiz (login talab qiladigan
+        # yoki cheklangan postlar uchun foydali).
+        if Path(INSTAGRAM_COOKIES_FILE).exists():
+            ydl_opts["cookiefile"] = INSTAGRAM_COOKIES_FILE
+        else:
+            logger.warning(
+                f"{INSTAGRAM_COOKIES_FILE} topilmadi — cookies'siz urinilmoqda. "
+                "Agar Instagram doim faqat audio bersa, cookies fayl qo'shing."
+            )
+    else:
+        ydl_opts = {
+            **base_opts,
+            "format": "(bestvideo+bestaudio/best)[vcodec!=none]",
+            "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
+        }
+
+    def _run(opts: dict):
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info)
+            return ydl, info, filename
+
+    ydl, info, filename = _run(ydl_opts)
+    mp4 = str(Path(filename).with_suffix(".mp4"))
+    if not Path(mp4).exists():
+        for f in Path(out_dir).glob("*.mp4"):
+            mp4 = str(f)
+            break
+
+    has_video = _probe_has_video(mp4) if Path(mp4).exists() else False
+    logger.info(f"download_video: {mp4} | instagram={instagram} | video stream bor: {has_video}")
+
+    # Instagram uchun: agar birinchi urinish audio-only chiqsa, "best" formatdagi
+    # boshqa variantlarni avtomatik qayta sinab ko'ramiz (fallback).
+    if instagram and not has_video:
+        logger.warning("Instagram: birinchi format audio-only chiqdi, fallback bilan qayta urinilmoqda…")
+        fallback_opts = {**ydl_opts, "format": "best"}
+        try:
+            for old in Path(out_dir).glob("*"):
+                old.unlink()
+        except Exception:
+            pass
+        ydl, info, filename = _run(fallback_opts)
         mp4 = str(Path(filename).with_suffix(".mp4"))
         if not Path(mp4).exists():
             for f in Path(out_dir).glob("*.mp4"):
                 mp4 = str(f)
                 break
-        # Faylda video oqimi borligini tekshiramiz
-        has_video = True
-        if Path(mp4).exists():
-            try:
-                import subprocess
-                probe = subprocess.run(
-                    ["ffprobe", "-v", "error", "-select_streams", "v",
-                     "-show_entries", "stream=codec_type", "-of", "csv=p=0", mp4],
-                    capture_output=True, text=True, timeout=10,
-                )
-                has_video = "video" in probe.stdout
-                logger.info(f"download_video: {mp4} | video stream bor: {has_video}")
-            except Exception as pe:
-                logger.warning(f"ffprobe tekshirishda xato: {pe}")
-        if not has_video:
-            raise yt_dlp.utils.DownloadError("Faylda video oqimi topilmadi (audio-only)")
-        return mp4
+        has_video = _probe_has_video(mp4) if Path(mp4).exists() else False
+        logger.info(f"download_video (fallback): {mp4} | video stream bor: {has_video}")
+
+    if not has_video:
+        raise yt_dlp.utils.DownloadError("Faylda video oqimi topilmadi (audio-only)")
+    return mp4
 
 async def recognize_audio(file_path: str) -> dict:
     url = "https://api.audd.io/"
