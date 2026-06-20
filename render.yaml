@@ -5,10 +5,6 @@ services:
     plan: free
     buildCommand: "apt-get update && apt-get install -y ffmpeg && pip install -r requirements.txt"
     startCommand: "python main.py"
-    disk:
-      name: musicbot-data
-      mountPath: /data
-      sizeGB: 1
     envVars:
       - key: BOT_TOKEN
         sync: false
