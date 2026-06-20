@@ -410,7 +410,11 @@ async def cb_nav_close(cb: CallbackQuery):
 @router.callback_query(F.data.startswith("findsong_"))
 async def cb_find_song(cb: CallbackQuery):
     """Video tarkibidagi qo'shiqni tanib, MP3 yuklab beradi."""
-    msg_id = int(cb.data.removeprefix("findsong_"))
+    try:
+        msg_id = int(cb.data.removeprefix("findsong_"))
+    except ValueError:
+        await cb.answer("❌ Noto'g'ri so'rov.", show_alert=True)
+        return
     vid_path = video_cache.get(msg_id)
     if not vid_path or not Path(vid_path).exists():
         await cb.answer("❌ Video topilmadi, qayta yuboring.", show_alert=True)
@@ -452,9 +456,14 @@ async def cb_find_song(cb: CallbackQuery):
         logger.exception(e)
         await info_msg.edit_text("❌ Xatolik yuz berdi.")
 
-
+@router.callback_query(F.data.startswith("dl_"))
+async def cb_download_song(cb: CallbackQuery):
     uid = cb.from_user.id
-    idx = int(cb.data.removeprefix("dl_"))
+    try:
+        idx = int(cb.data.removeprefix("dl_"))
+    except ValueError:
+        await cb.answer("❌ Noto'g'ri so'rov.", show_alert=True)
+        return
     urls = search_cache.get(uid, [])
     if not urls or idx >= len(urls):
         await cb.answer("❌ Natija eskirdi. Qayta qidiring.", show_alert=True)
