@@ -494,21 +494,6 @@ async def cmd_admin(message: Message):
                      InlineKeyboardButton(text="🛡 Adminlar ro'yxati", callback_data="adm_listadmins")])
     await message.answer("🔧 <b>Admin panel</b>", reply_markup=InlineKeyboardMarkup(inline_keyboard=btns))
 
-@router.message(F.photo | F.video | F.audio | F.document)
-async def h_admin_broadcast_catcher_media(message: Message):
-    """Admin 'Reklama' rejimida media xabarlarni broadcast qiladi."""
-    uid = message.from_user.id
-    if not is_admin(uid):
-        return
-    pending = admin_pending_action.get(uid)
-    logger.info(f"[BROADCAST DEBUG] uid={uid}, pending={pending}")
-    if not pending or pending.get("action") != "broadcast":
-        return
-    admin_pending_action.pop(uid, None)
-    status = await message.answer("📣 Yuborilmoqda…")
-    await send_broadcast(message, status)
-
-
 
 @router.callback_query(F.data == "adm_users")
 async def cb_users(cb: CallbackQuery):
@@ -682,40 +667,46 @@ async def cmd_cancel(message: Message):
     if cleared:
         await message.answer("❌ Bekor qilindi.")
 
-@router.message(F.video | F.document)
-async def h_admin_movie_file(message: Message):
-    """Admin kino qo'shish jarayonida bo'lsa, video yoki document faylni qabul qiladi.
-    Forward qilingan fayllarda mime_type ba'zan aniq kelmasligi mumkin, shu sababli
-    bu yerda mime_type tekshirilmaydi — faqat admin 'kino qo'shish' rejimida ekanligi tekshiriladi."""
+@router.message(F.photo | F.video | F.audio | F.document)
+async def h_admin_media_router(message: Message):
+    """Admin uchun media xabarlarni ikki holatda ishlatadi:
+    1) Kino qo'shish jarayonida bo'lsa -> video/document faylni kino sifatida qabul qiladi
+    2) Reklama yuborish jarayonida bo'lsa -> hammaga broadcast qiladi
+    Ikkisi bitta funksiyada, chunki aiogram'da bir xil filtrli ikkita handler
+    ketma-ket turganda, birinchisi 'return' qilsa ham ikkinchisiga o'tmasligi mumkin."""
     uid = message.from_user.id
-    logger.info(f"[KINO DEBUG] h_admin_movie_file chaqirildi: uid={uid}, is_admin={is_admin(uid)}, "
-                f"video={bool(message.video)}, document={bool(message.document)}")
     if not is_admin(uid):
-        logger.info("[KINO DEBUG] admin emas, return")
         return
-    state = admin_movie_state.get(uid)
-    logger.info(f"[KINO DEBUG] state={state}")
-    if not state or state.get("step") != "wait_file":
-        logger.info("[KINO DEBUG] state mos kelmadi, return")
-        return  # admin kino qo'shish jarayonida emas -> boshqa handlerga o'tadi (h_video/h_doc)
 
-    file_id = message.video.file_id if message.video else message.document.file_id
-    title = (message.caption or "Noma'lum film").split("\n")[0][:80]
-    state["file_id"] = file_id
-    state["title"] = title
-    state["caption"] = message.caption or ""
-    state["step"] = "wait_code"
+    # 1) Kino qo'shish jarayoni (faqat video/document uchun)
+    movie_state = admin_movie_state.get(uid)
+    if (message.video or message.document) and movie_state and movie_state.get("step") == "wait_file":
+        file_id = message.video.file_id if message.video else message.document.file_id
+        title = (message.caption or "Noma'lum film").split("\n")[0][:80]
+        movie_state["file_id"] = file_id
+        movie_state["title"] = title
+        movie_state["caption"] = message.caption or ""
+        movie_state["step"] = "wait_code"
 
-    suggested = db_next_movie_code()
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text=f"✅ #{suggested} (taklif)", callback_data=f"usecode_{suggested}")
-    ]])
-    await message.answer(
-        f"🎬 Fayl qabul qilindi: <b>{title}</b>\n\n"
-        f"Endi shu kino uchun kod kiriting (faqat raqam, masalan: 4131),\n"
-        f"yoki taklif qilingan kodni tanlang. Foydalanuvchilar uni <code>#{suggested}</code> deb yozadi:",
-        reply_markup=kb,
-    )
+        suggested = db_next_movie_code()
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text=f"✅ #{suggested} (taklif)", callback_data=f"usecode_{suggested}")
+        ]])
+        await message.answer(
+            f"🎬 Fayl qabul qilindi: <b>{title}</b>\n\n"
+            f"Endi shu kino uchun kod kiriting (faqat raqam, masalan: 4131),\n"
+            f"yoki taklif qilingan kodni tanlang. Foydalanuvchilar uni <code>#{suggested}</code> deb yozadi:",
+            reply_markup=kb,
+        )
+        return
+
+    # 2) Reklama (broadcast) jarayoni
+    pending = admin_pending_action.get(uid)
+    if pending and pending.get("action") == "broadcast":
+        admin_pending_action.pop(uid, None)
+        status = await message.answer("📣 Yuborilmoqda…")
+        await send_broadcast(message, status)
+        return
 
 @router.callback_query(F.data.startswith("usecode_"))
 async def cb_usecode(cb: CallbackQuery):
