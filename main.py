@@ -19,7 +19,7 @@ from aiogram.enums import ParseMode
 import yt_dlp
 
 # ══════════════════════════════════════════════
-BOT_TOKEN    = os.environ.get("BOT_TOKEN", "8684337468:AAGhQ6rjhtvX-pUuYfmtnrA7SMVHIciIG6Q")
+BOT_TOKEN    = os.environ.get("BOT_TOKEN", "8684337468:AAH0DdUJZ0L90-aEcx7sFH0pFzsfiDTH__0")
 ADMIN_IDS    = [5599261398]
 AUDD_TOKEN   = os.environ.get("AUDD_TOKEN", "test")
 _DATA_DIR = Path("/data") if Path("/data").exists() else Path(".")
@@ -251,6 +251,32 @@ YT_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept-Language": "en-US,en;q=0.9",
 }
+YOUTUBE_COOKIES_FILE = "youtube_cookies.txt"
+
+def _write_cookies_from_env():
+    """YOUTUBE_COOKIES_CONTENT env var orqali yuborilgan cookies matnini
+    faylga yozadi (Render kabi platformalarda fayl yuklash mumkin emas,
+    shu sababli matnni environment variable orqali olamiz)."""
+    content = os.environ.get("YOUTUBE_COOKIES_CONTENT")
+    if content:
+        Path(YOUTUBE_COOKIES_FILE).write_text(content)
+        logger.info("YouTube cookies YOUTUBE_COOKIES_CONTENT dan yozildi.")
+
+_write_cookies_from_env()
+
+def _yt_extra_opts() -> dict:
+    """YouTube uchun qoshimcha sozlamalar."""
+    opts = {
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["ios", "android", "tv_embedded", "web"],
+                "player_skip": ["webpage"],
+            }
+        },
+    }
+    if Path(YOUTUBE_COOKIES_FILE).exists():
+        opts["cookiefile"] = YOUTUBE_COOKIES_FILE
+    return opts
 
 def fmt_duration(dur) -> str:
     if not dur:
@@ -272,7 +298,7 @@ def search_songs(query: str, count: int = 10) -> list:
         "noplaylist": True,
         "extract_flat": True,
         "http_headers": YT_HEADERS,
-        "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
+        **_yt_extra_opts(),
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(f"ytsearch{count}:{query}", download=False)
@@ -311,7 +337,7 @@ def download_mp3(query: str, out_dir: Path) -> dict:
     if is_url and is_instagram_url(search) and Path(INSTAGRAM_COOKIES_FILE).exists():
         ydl_opts["cookiefile"] = INSTAGRAM_COOKIES_FILE
     if not is_url or not is_instagram_url(search):
-        ydl_opts["extractor_args"] = {"youtube": {"player_client": ["android", "web"]}}
+        ydl_opts.update(_yt_extra_opts())
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(search, download=True)
@@ -384,7 +410,7 @@ def download_video(url: str, out_dir: Path) -> str:
         ydl_opts = {
             **base_opts,
             "format": "(bestvideo+bestaudio/best)[vcodec!=none]",
-            "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
+            **_yt_extra_opts(),
         }
 
     def _run(opts: dict):
@@ -468,19 +494,20 @@ async def cmd_admin(message: Message):
                      InlineKeyboardButton(text="🛡 Adminlar ro'yxati", callback_data="adm_listadmins")])
     await message.answer("🔧 <b>Admin panel</b>", reply_markup=InlineKeyboardMarkup(inline_keyboard=btns))
 
-@router.message(F.text | F.photo | F.video | F.audio | F.document)
-async def h_admin_broadcast_catcher(message: Message):
-    """Admin 'Reklama' rejimida bo'lsa, kelgan har qanday xabar turini hammaga tarqatadi.
-    Boshqa hech qanday rejimda bo'lmasa, hech narsa qilmaydi — keyingi handlerga o'tadi."""
+@router.message(F.photo | F.video | F.audio | F.document)
+async def h_admin_broadcast_catcher_media(message: Message):
+    """Admin 'Reklama' rejimida media xabarlarni broadcast qiladi."""
     uid = message.from_user.id
     if not is_admin(uid):
         return
     pending = admin_pending_action.get(uid)
     if not pending or pending.get("action") != "broadcast":
-        return  # boshqa rejim yoki rejim yo'q -> keyingi handlerlar ishlaydi
+        return
     admin_pending_action.pop(uid, None)
     status = await message.answer("📣 Yuborilmoqda…")
     await send_broadcast(message, status)
+
+
 
 @router.callback_query(F.data == "adm_users")
 async def cb_users(cb: CallbackQuery):
@@ -931,9 +958,18 @@ async def cb_download_song(cb: CallbackQuery):
 # ── ASOSIY HANDLERLAR ─────────────────────────
 @router.message(F.text)
 async def h_text(message: Message):
-    if not await guard(message): return
-    db_add_user(message.from_user.id, message.from_user.username or "")
+    uid = message.from_user.id
     text = message.text.strip()
+    # Admin broadcast rejimida bo'lsa va command bo'lmasa — broadcast qilamiz
+    if is_admin(uid) and not text.startswith("/"):
+        pending = admin_pending_action.get(uid)
+        if pending and pending.get("action") == "broadcast":
+            admin_pending_action.pop(uid, None)
+            status = await message.answer("📣 Yuborilmoqda…")
+            await send_broadcast(message, status)
+            return
+    if not await guard(message): return
+    db_add_user(uid, message.from_user.username or "")
     url  = URL_RE.search(text)
 
     if url:
