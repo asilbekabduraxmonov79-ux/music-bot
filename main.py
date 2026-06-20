@@ -19,12 +19,13 @@ from aiogram.enums import ParseMode
 import yt_dlp
 
 # ══════════════════════════════════════════════
-BOT_TOKEN    = "8684337468:AAGhQ6rjhtvX-pUuYfmtnrA7SMVHIciIG6Q"
+BOT_TOKEN    = os.environ.get("BOT_TOKEN", "8684337468:AAGhQ6rjhtvX-pUuYfmtnrA7SMVHIciIG6Q")
 ADMIN_IDS    = [5599261398]
-AUDD_TOKEN   = "test"
-DOWNLOAD_DIR = Path("downloads")
-DOWNLOAD_DIR.mkdir(exist_ok=True)
-DB_PATH      = "bot.db"
+AUDD_TOKEN   = os.environ.get("AUDD_TOKEN", "test")
+_DATA_DIR = Path("/data") if Path("/data").exists() else Path(".")
+DOWNLOAD_DIR = _DATA_DIR / "downloads"
+DOWNLOAD_DIR.mkdir(exist_ok=True, parents=True)
+DB_PATH      = str(_DATA_DIR / "bot.db")
 # Instagram'dan video yuklash uchun cookies fayli (ixtiyoriy).
 # Brauzerdan Instagram'ga login qilib, "Get cookies.txt" kengaytmasi bilan
 # eksport qilib, shu nomdagi faylga joylashtiring. Fayl bo'lmasa muammo emas,
@@ -82,8 +83,19 @@ def db_init():
     con.execute("""CREATE TABLE IF NOT EXISTS required_channels (
         channel_id TEXT PRIMARY KEY, channel_name TEXT, invite_link TEXT)""")
     con.execute("""CREATE TABLE IF NOT EXISTS users (
-        user_id INTEGER PRIMARY KEY, username TEXT)""")
-    con.commit(); con.close()
+        user_id INTEGER PRIMARY KEY, username TEXT, banned INTEGER DEFAULT 0)""")
+    con.execute("""CREATE TABLE IF NOT EXISTS movies (
+        code TEXT PRIMARY KEY, file_id TEXT, title TEXT, caption TEXT)""")
+    con.execute("""CREATE TABLE IF NOT EXISTS admins (
+        user_id INTEGER PRIMARY KEY, username TEXT, added_by INTEGER)""")
+    con.commit()
+    # eski bazalarda 'banned' ustuni bo'lmasligi mumkin — qo'shamiz
+    try:
+        con.execute("ALTER TABLE users ADD COLUMN banned INTEGER DEFAULT 0")
+        con.commit()
+    except sqlite3.OperationalError:
+        pass  # ustun allaqachon bor
+    con.close()
 
 def db_add_channel(ch_id, name, link):
     con = sqlite3.connect(DB_PATH)
@@ -102,7 +114,7 @@ def db_get_channels():
 
 def db_add_user(uid, uname):
     con = sqlite3.connect(DB_PATH)
-    con.execute("INSERT OR IGNORE INTO users VALUES (?,?)", (uid, uname))
+    con.execute("INSERT OR IGNORE INTO users VALUES (?,?,0)", (uid, uname))
     con.commit(); con.close()
 
 def db_user_count():
@@ -112,8 +124,100 @@ def db_user_count():
 
 def db_all_users():
     con = sqlite3.connect(DB_PATH)
-    rows = con.execute("SELECT user_id FROM users").fetchall()
+    rows = con.execute("SELECT user_id FROM users WHERE banned=0").fetchall()
     con.close(); return [r[0] for r in rows]
+
+# ── BLOKLASH ───────────────────────────────────
+def db_ban_user(uid: int):
+    con = sqlite3.connect(DB_PATH)
+    con.execute("UPDATE users SET banned=1 WHERE user_id=?", (uid,))
+    con.commit(); con.close()
+
+def db_unban_user(uid: int):
+    con = sqlite3.connect(DB_PATH)
+    con.execute("UPDATE users SET banned=0 WHERE user_id=?", (uid,))
+    con.commit(); con.close()
+
+def db_is_banned(uid: int) -> bool:
+    con = sqlite3.connect(DB_PATH)
+    row = con.execute("SELECT banned FROM users WHERE user_id=?", (uid,)).fetchone()
+    con.close()
+    return bool(row and row[0])
+
+def db_banned_users():
+    con = sqlite3.connect(DB_PATH)
+    rows = con.execute("SELECT user_id, username FROM users WHERE banned=1").fetchall()
+    con.close(); return rows
+
+def db_banned_count():
+    con = sqlite3.connect(DB_PATH)
+    c = con.execute("SELECT COUNT(*) FROM users WHERE banned=1").fetchone()[0]
+    con.close(); return c
+
+# ── YORDAMCHI ADMINLAR ────────────────────────
+def db_add_admin(uid: int, uname: str, added_by: int):
+    con = sqlite3.connect(DB_PATH)
+    con.execute("INSERT OR REPLACE INTO admins VALUES (?,?,?)", (uid, uname, added_by))
+    con.commit(); con.close()
+
+def db_remove_admin(uid: int):
+    con = sqlite3.connect(DB_PATH)
+    con.execute("DELETE FROM admins WHERE user_id=?", (uid,))
+    con.commit(); con.close()
+
+def db_all_admins():
+    con = sqlite3.connect(DB_PATH)
+    rows = con.execute("SELECT user_id, username FROM admins").fetchall()
+    con.close(); return rows
+
+def db_is_sub_admin(uid: int) -> bool:
+    con = sqlite3.connect(DB_PATH)
+    row = con.execute("SELECT 1 FROM admins WHERE user_id=?", (uid,)).fetchone()
+    con.close()
+    return bool(row)
+
+# ── KINO KODLARI ──────────────────────────────
+def db_add_movie(code: str, file_id: str, title: str, caption: str = ""):
+    con = sqlite3.connect(DB_PATH)
+    con.execute("INSERT OR REPLACE INTO movies VALUES (?,?,?,?)", (code, file_id, title, caption))
+    con.commit(); con.close()
+
+def db_get_movie(code: str):
+    con = sqlite3.connect(DB_PATH)
+    row = con.execute("SELECT file_id,title,caption FROM movies WHERE code=?", (code,)).fetchone()
+    con.close()
+    if not row:
+        return None
+    return {"file_id": row[0], "title": row[1], "caption": row[2]}
+
+def db_remove_movie(code: str):
+    con = sqlite3.connect(DB_PATH)
+    con.execute("DELETE FROM movies WHERE code=?", (code,))
+    con.commit(); con.close()
+
+def db_all_movies():
+    con = sqlite3.connect(DB_PATH)
+    rows = con.execute("SELECT code,title FROM movies ORDER BY CAST(code AS INTEGER)").fetchall()
+    con.close(); return rows
+
+def db_movie_count():
+    con = sqlite3.connect(DB_PATH)
+    c = con.execute("SELECT COUNT(*) FROM movies").fetchone()[0]
+    con.close(); return c
+
+def db_next_movie_code() -> str:
+    """Bo'sh raqamli kodlardan eng kichigini topadi (1 dan boshlab)."""
+    con = sqlite3.connect(DB_PATH)
+    rows = con.execute("SELECT code FROM movies").fetchall()
+    con.close()
+    used = set()
+    for (c,) in rows:
+        if c.isdigit():
+            used.add(int(c))
+    n = 1
+    while n in used:
+        n += 1
+    return str(n)
 
 # ── MAJBURIY OBUNA ────────────────────────────
 async def check_subs(uid):
@@ -133,6 +237,9 @@ def sub_kb(not_joined):
     return InlineKeyboardMarkup(inline_keyboard=btns)
 
 async def guard(message: Message) -> bool:
+    if db_is_banned(message.from_user.id):
+        await message.answer("🚫 Siz botdan foydalanishdan bloklangansiz.")
+        return False
     nj = await check_subs(message.from_user.id)
     if nj:
         await message.answer("⚠️ Avval quyidagi kanallarga obuna bo'ling:", reply_markup=sub_kb(nj))
@@ -334,24 +441,117 @@ async def recognize_audio(file_path: str) -> dict:
     return {}
 
 # ── ADMIN ─────────────────────────────────────
-def is_admin(uid): return uid in ADMIN_IDS
+def is_owner(uid): return uid in ADMIN_IDS
+def is_admin(uid): return uid in ADMIN_IDS or db_is_sub_admin(uid)
+
+# Admin "kino qo'shish" jarayonidagi holatni saqlaymiz: {admin_id: {"step":..., "file_id":..., "title":...}}
+admin_movie_state: dict = {}
 
 @router.message(Command("admin"))
 async def cmd_admin(message: Message):
-    if not is_admin(message.from_user.id): return
+    uid = message.from_user.id
+    if not is_admin(uid): return
     btns = [
         [InlineKeyboardButton(text="📢 Kanal qo'shish", callback_data="adm_add")],
         [InlineKeyboardButton(text="🗑 Kanal o'chirish", callback_data="adm_del")],
         [InlineKeyboardButton(text="📋 Kanallar", callback_data="adm_list")],
         [InlineKeyboardButton(text="📣 Reklama", callback_data="adm_ads")],
         [InlineKeyboardButton(text="👥 Foydalanuvchilar", callback_data="adm_users")],
+        [InlineKeyboardButton(text="🚫 Bloklash", callback_data="adm_ban"),
+         InlineKeyboardButton(text="✅ Blokdan chiqarish", callback_data="adm_unban")],
+        [InlineKeyboardButton(text="🎬 Kino qo'shish", callback_data="adm_movie_add")],
+        [InlineKeyboardButton(text="🗑 Kino o'chirish", callback_data="adm_movie_del")],
+        [InlineKeyboardButton(text="📋 Kinolar ro'yxati", callback_data="adm_movie_list")],
     ]
+    if is_owner(uid):
+        btns.append([InlineKeyboardButton(text="🛡 Admin qo'shish", callback_data="adm_addadmin"),
+                     InlineKeyboardButton(text="🛡 Adminlar ro'yxati", callback_data="adm_listadmins")])
     await message.answer("🔧 <b>Admin panel</b>", reply_markup=InlineKeyboardMarkup(inline_keyboard=btns))
+
+@router.message(F.text | F.photo | F.video | F.audio | F.document)
+async def h_admin_broadcast_catcher(message: Message):
+    """Admin 'Reklama' rejimida bo'lsa, kelgan har qanday xabar turini hammaga tarqatadi.
+    Boshqa hech qanday rejimda bo'lmasa, hech narsa qilmaydi — keyingi handlerga o'tadi."""
+    uid = message.from_user.id
+    if not is_admin(uid):
+        return
+    pending = admin_pending_action.get(uid)
+    if not pending or pending.get("action") != "broadcast":
+        return  # boshqa rejim yoki rejim yo'q -> keyingi handlerlar ishlaydi
+    admin_pending_action.pop(uid, None)
+    status = await message.answer("📣 Yuborilmoqda…")
+    await send_broadcast(message, status)
 
 @router.callback_query(F.data == "adm_users")
 async def cb_users(cb: CallbackQuery):
     if not is_admin(cb.from_user.id): return
-    await cb.answer(f"👥 Jami: {db_user_count()} foydalanuvchi", show_alert=True)
+    await cb.answer(
+        f"👥 Jami: {db_user_count()} foydalanuvchi\n🚫 Bloklangan: {db_banned_count()}",
+        show_alert=True,
+    )
+
+# Admin'dan qo'shimcha matn kutilayotgan kichik harakatlar uchun holat:
+# {"action": "ban"/"unban"/"addadmin"}
+admin_pending_action: dict = {}
+
+@router.callback_query(F.data == "adm_ban")
+async def cb_ban(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    admin_pending_action[cb.from_user.id] = {"action": "ban"}
+    await cb.message.answer(
+        "🚫 Bloklash uchun foydalanuvchi ID raqamini yuboring.\n"
+        "(ID ni /admin → 👥 orqali emas, foydalanuvchi botga yozganda ko'rasiz, "
+        "yoki @userinfobot orqali bilib olishingiz mumkin)\n\n❌ Bekor: /cancel"
+    )
+    await cb.answer()
+
+@router.callback_query(F.data == "adm_unban")
+async def cb_unban(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    banned = db_banned_users()
+    if not banned:
+        await cb.answer("Bloklangan foydalanuvchilar yo'q", show_alert=True); return
+    btns = [[InlineKeyboardButton(text=f"✅ {uname or uid}", callback_data=f"unban_{uid}")] for uid, uname in banned[:60]]
+    await cb.message.answer("Blokdan chiqarish:", reply_markup=InlineKeyboardMarkup(inline_keyboard=btns))
+    await cb.answer()
+
+@router.callback_query(F.data.startswith("unban_"))
+async def cb_do_unban(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    target = int(cb.data.removeprefix("unban_"))
+    db_unban_user(target)
+    await cb.answer("✅ Blokdan chiqarildi", show_alert=True)
+    await cb.message.delete()
+
+@router.callback_query(F.data == "adm_addadmin")
+async def cb_addadmin(cb: CallbackQuery):
+    if not is_owner(cb.from_user.id): return
+    admin_pending_action[cb.from_user.id] = {"action": "addadmin"}
+    await cb.message.answer(
+        "🛡 Yangi yordamchi admin qo'shish uchun uning ID raqamini yuboring.\n\n❌ Bekor: /cancel"
+    )
+    await cb.answer()
+
+@router.callback_query(F.data == "adm_listadmins")
+async def cb_listadmins(cb: CallbackQuery):
+    if not is_owner(cb.from_user.id): return
+    admins = db_all_admins()
+    if not admins:
+        await cb.answer("Yordamchi adminlar yo'q", show_alert=True); return
+    btns = [[InlineKeyboardButton(text=f"🗑 {uname or uid}", callback_data=f"rmadmin_{uid}")] for uid, uname in admins]
+    await cb.message.answer(
+        "🛡 <b>Yordamchi adminlar</b> (bosish — o'chirish):",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=btns),
+    )
+    await cb.answer()
+
+@router.callback_query(F.data.startswith("rmadmin_"))
+async def cb_rmadmin(cb: CallbackQuery):
+    if not is_owner(cb.from_user.id): return
+    target = int(cb.data.removeprefix("rmadmin_"))
+    db_remove_admin(target)
+    await cb.answer("✅ O'chirildi", show_alert=True)
+    await cb.message.delete()
 
 @router.callback_query(F.data == "adm_list")
 async def cb_list(cb: CallbackQuery):
@@ -389,7 +589,172 @@ async def cb_rmch(cb: CallbackQuery):
 @router.callback_query(F.data == "adm_ads")
 async def cb_ads(cb: CallbackQuery):
     if not is_admin(cb.from_user.id): return
-    await cb.message.answer("Format:\n<code>/ads Reklama matni</code>"); await cb.answer()
+    admin_pending_action[cb.from_user.id] = {"action": "broadcast"}
+    await cb.message.answer(
+        "📣 Reklama uchun xabar yuboring — matn, rasm, video yoki audio bo'lishi mumkin "
+        "(rasm/video/audio'ga izoh/caption ham qo'shsangiz bo'ladi).\n\n❌ Bekor: /cancel"
+    )
+    await cb.answer()
+
+# ── KINO QO'SHISH / O'CHIRISH / RO'YXAT ───────
+@router.callback_query(F.data == "adm_movie_add")
+async def cb_movie_add(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    admin_movie_state[cb.from_user.id] = {"step": "wait_file"}
+    await cb.message.answer(
+        "🎬 Kino faylini (video yoki video-document) menga forward qiling yoki yuboring.\n\n"
+        "❌ Bekor qilish uchun /cancel yozing."
+    )
+    await cb.answer()
+
+@router.callback_query(F.data == "adm_movie_list")
+async def cb_movie_list(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    movies = db_all_movies()
+    if not movies:
+        await cb.answer("Kinolar yo'q", show_alert=True); return
+    text = f"📋 <b>Kinolar ({len(movies)} ta):</b>\n" + "\n".join(f"• #{code} — {title}" for code, title in movies)
+    if len(text) > 4000:
+        text = text[:4000] + "\n…"
+    await cb.message.answer(text); await cb.answer()
+
+@router.callback_query(F.data == "adm_movie_del")
+async def cb_movie_del(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    movies = db_all_movies()
+    if not movies:
+        await cb.answer("Kinolar yo'q", show_alert=True); return
+    btns = []
+    row = []
+    for code, title in movies[:60]:
+        row.append(InlineKeyboardButton(text=f"#{code}", callback_data=f"rmmovie_{code}"))
+        if len(row) == 5:
+            btns.append(row); row = []
+    if row:
+        btns.append(row)
+    await cb.message.answer(
+        "🗑 O'chirish uchun kodni tanlang:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=btns),
+    )
+    await cb.answer()
+
+@router.callback_query(F.data.startswith("rmmovie_"))
+async def cb_rmmovie(cb: CallbackQuery):
+    if not is_admin(cb.from_user.id): return
+    code = cb.data.removeprefix("rmmovie_")
+    db_remove_movie(code)
+    await cb.answer(f"✅ Kino {code} o'chirildi", show_alert=True)
+    await cb.message.delete()
+
+@router.message(Command("cancel"))
+async def cmd_cancel(message: Message):
+    if not is_admin(message.from_user.id): return
+    cleared = bool(admin_movie_state.pop(message.from_user.id, None)) or \
+              bool(admin_pending_action.pop(message.from_user.id, None))
+    if cleared:
+        await message.answer("❌ Bekor qilindi.")
+
+@router.message(F.video | (F.document & F.document.mime_type.startswith("video")))
+async def h_admin_movie_file(message: Message):
+    """Admin kino qo'shish jarayonida bo'lsa, video faylni qabul qiladi."""
+    uid = message.from_user.id
+    if not is_admin(uid):
+        return
+    state = admin_movie_state.get(uid)
+    if not state or state.get("step") != "wait_file":
+        return  # admin kino qo'shish jarayonida emas -> boshqa handlerga o'tadi (h_video/h_doc)
+
+    file_id = message.video.file_id if message.video else message.document.file_id
+    title = (message.caption or "Noma'lum film").split("\n")[0][:80]
+    state["file_id"] = file_id
+    state["title"] = title
+    state["caption"] = message.caption or ""
+    state["step"] = "wait_code"
+
+    suggested = db_next_movie_code()
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text=f"✅ #{suggested} (taklif)", callback_data=f"usecode_{suggested}")
+    ]])
+    await message.answer(
+        f"🎬 Fayl qabul qilindi: <b>{title}</b>\n\n"
+        f"Endi shu kino uchun kod kiriting (faqat raqam, masalan: 4131),\n"
+        f"yoki taklif qilingan kodni tanlang. Foydalanuvchilar uni <code>#{suggested}</code> deb yozadi:",
+        reply_markup=kb,
+    )
+
+@router.callback_query(F.data.startswith("usecode_"))
+async def cb_usecode(cb: CallbackQuery):
+    uid = cb.from_user.id
+    state = admin_movie_state.get(uid)
+    if not is_admin(uid) or not state or state.get("step") != "wait_code":
+        await cb.answer("❌ Jarayon topilmadi.", show_alert=True); return
+    code = cb.data.removeprefix("usecode_")
+    db_add_movie(code, state["file_id"], state["title"], state.get("caption", ""))
+    admin_movie_state.pop(uid, None)
+    await cb.answer("✅ Saqlandi!", show_alert=True)
+    await cb.message.answer(f"✅ Kino <b>{state['title']}</b> kod <b>#{code}</b> bilan saqlandi.")
+
+@router.message(F.text.regexp(r"^#\d{1,10}$"))
+async def h_movie_code_lookup(message: Message):
+    """Foydalanuvchi #raqam yozganda kino yuboradi (masalan: #4131)."""
+    uid = message.from_user.id
+    code = message.text.strip().removeprefix("#")
+
+    if not await guard(message): return
+    db_add_user(uid, message.from_user.username or "")
+    movie = db_get_movie(code)
+    if not movie:
+        await message.answer("❓ Bu kodga mos kino topilmadi. Kodni tekshirib qayta yuboring.\nMasalan: <code>#4131</code>")
+        return
+    try:
+        await message.answer_video(
+            movie["file_id"],
+            caption=movie.get("caption") or f"🎬 <b>{movie['title']}</b>",
+        )
+    except Exception as e:
+        logger.exception(e)
+        await message.answer("❌ Kinoni yuborishda xatolik yuz berdi.")
+
+@router.message(F.text.regexp(r"^\d{1,15}$"))
+async def h_admin_numeric_input(message: Message):
+    """Admindan kutilayotgan raqamli kiritishlar: kino kodi, ban/unban/addadmin ID."""
+    uid = message.from_user.id
+    text = message.text.strip()
+
+    if not is_admin(uid):
+        return  # oddiy foydalanuvchidan kelgan raqam — e'tiborsiz qoldiramiz
+
+    # 1) Kino kodi kiritish jarayoni
+    movie_state = admin_movie_state.get(uid)
+    if movie_state and movie_state.get("step") == "wait_code":
+        if db_get_movie(text):
+            await message.answer(f"⚠️ Kod {text} band. Boshqa kod kiriting yoki taklif qilinganini tanlang.")
+            return
+        db_add_movie(text, movie_state["file_id"], movie_state["title"], movie_state.get("caption", ""))
+        admin_movie_state.pop(uid, None)
+        await message.answer(f"✅ Kino <b>{movie_state['title']}</b> kod <b>#{text}</b> bilan saqlandi.")
+        return
+
+    # 2) Ban / Unban / Admin qo'shish jarayoni
+    pending = admin_pending_action.get(uid)
+    if pending:
+        action = pending["action"]
+        target = int(text)
+        admin_pending_action.pop(uid, None)
+        if action == "ban":
+            if target in ADMIN_IDS:
+                await message.answer("❌ Bosh adminni bloklab bo'lmaydi."); return
+            db_ban_user(target)
+            await message.answer(f"🚫 Foydalanuvchi <code>{target}</code> bloklandi.")
+        elif action == "unban":
+            db_unban_user(target)
+            await message.answer(f"✅ Foydalanuvchi <code>{target}</code> blokdan chiqarildi.")
+        elif action == "addadmin":
+            if not is_owner(uid):
+                return
+            db_add_admin(target, "", uid)
+            await message.answer(f"🛡 Foydalanuvchi <code>{target}</code> endi yordamchi admin.")
+        return
 
 @router.message(Command("addch"))
 async def cmd_addch(message: Message):
@@ -400,12 +765,25 @@ async def cmd_addch(message: Message):
     db_add_channel(p[1], p[2], p[3])
     await message.answer(f"✅ <b>{p[2]}</b> qo'shildi")
 
+async def send_broadcast(source_message: Message, status_message: Message):
+    """Berilgan xabarni (matn/rasm/video/audio — istalgan turi) barcha foydalanuvchilarga nusxalaydi."""
+    users = db_all_users()
+    ok = 0
+    for uid in users:
+        try:
+            await source_message.copy_to(uid)
+            ok += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            pass
+    await status_message.edit_text(f"✅ Yuborildi: {ok}/{len(users)}")
+
 @router.message(Command("ads"))
 async def cmd_ads(message: Message):
     if not is_admin(message.from_user.id): return
     text = message.text.removeprefix("/ads").strip()
     if not text:
-        await message.answer("❗ Matn bo'sh!"); return
+        await message.answer("❗ Matn bo'sh! Yoki /admin → 📣 Reklama orqali rasm/video/audio ham yuborishingiz mumkin."); return
     users = db_all_users()
     msg = await message.answer(f"📣 {len(users)} ta foydalanuvchiga yuborilmoqda…")
     ok = 0
