@@ -681,9 +681,11 @@ async def cmd_cancel(message: Message):
     if cleared:
         await message.answer("❌ Bekor qilindi.")
 
-@router.message(F.video | (F.document & F.document.mime_type.startswith("video")))
+@router.message(F.video | F.document)
 async def h_admin_movie_file(message: Message):
-    """Admin kino qo'shish jarayonida bo'lsa, video faylni qabul qiladi."""
+    """Admin kino qo'shish jarayonida bo'lsa, video yoki document faylni qabul qiladi.
+    Forward qilingan fayllarda mime_type ba'zan aniq kelmasligi mumkin, shu sababli
+    bu yerda mime_type tekshirilmaydi — faqat admin 'kino qo'shish' rejimida ekanligi tekshiriladi."""
     uid = message.from_user.id
     if not is_admin(uid):
         return
