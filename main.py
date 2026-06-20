@@ -31,6 +31,39 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 search_cache: dict = {}
+video_cache: dict = {}
+
+def cleanup_old_files(max_age_hours: int = 1):
+    """downloads/ papkasidagi eski fayllarni o'chiradi."""
+    import time
+    now = time.time()
+    max_age = max_age_hours * 3600
+    if not DOWNLOAD_DIR.exists():
+        return
+    for path in DOWNLOAD_DIR.rglob("*"):
+        try:
+            if path.is_file() and (now - path.stat().st_mtime) > max_age:
+                path.unlink()
+        except Exception:
+            pass
+    for path in sorted(DOWNLOAD_DIR.rglob("*"), reverse=True):
+        try:
+            if path.is_dir() and not any(path.iterdir()):
+                path.rmdir()
+        except Exception:
+            pass
+
+async def periodic_cleanup():
+    """Har 30 daqiqada eski fayllarni tozalaydi."""
+    while True:
+        try:
+            cleanup_old_files(max_age_hours=1)
+            stale = [k for k, p in video_cache.items() if not Path(p).exists()]
+            for k in stale:
+                video_cache.pop(k, None)
+        except Exception as e:
+            logger.warning(f"Cleanup xatosi: {e}")
+        await asyncio.sleep(1800)
 
 bot    = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp     = Dispatcher()
@@ -358,8 +391,52 @@ async def cb_nav_close(cb: CallbackQuery):
     await cb.answer()
     await cb.message.delete()
 
-@router.callback_query(F.data.startswith("dl_"))
-async def cb_download_song(cb: CallbackQuery):
+@router.callback_query(F.data.startswith("findsong_"))
+async def cb_find_song(cb: CallbackQuery):
+    """Video tarkibidagi qo'shiqni tanib, MP3 yuklab beradi."""
+    msg_id = int(cb.data.removeprefix("findsong_"))
+    vid_path = video_cache.get(msg_id)
+    if not vid_path or not Path(vid_path).exists():
+        await cb.answer("❌ Video topilmadi, qayta yuboring.", show_alert=True)
+        return
+
+    await cb.answer("🎧 Tekshirilmoqda…")
+    info_msg = await cb.message.answer("🎧 Qo'shiq tanib olinmoqda…")
+    try:
+        # Videodan audio chiqarib, tanib olishga yuboramiz
+        with tempfile.TemporaryDirectory() as tmpdir:
+            audio_path = str(Path(tmpdir) / "extract.mp3")
+            ydl_opts = {
+                "quiet": True, "no_warnings": True,
+            }
+            # ffmpeg orqali videodan audio ajratamiz
+            import subprocess
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", vid_path, "-vn", "-acodec", "libmp3lame", audio_path],
+                check=True, capture_output=True,
+            )
+            result = await recognize_audio(audio_path)
+
+        if result and result.get("title"):
+            q = f"{result['title']} {result['artist']}"
+            await info_msg.edit_text(
+                f"🎵 <b>{result['title']}</b>\n🎤 {result['artist']}\n\n⬇️ Yuklanmoqda…"
+            )
+            with tempfile.TemporaryDirectory() as tmpdir2:
+                aud = download_mp3(q, Path(tmpdir2))
+                await cb.message.answer_audio(
+                    FSInputFile(aud["path"]),
+                    title=result["title"],
+                    performer=result["artist"],
+                )
+            await info_msg.delete()
+        else:
+            await info_msg.edit_text("❓ Qo'shiq tanib olinmadi.")
+    except Exception as e:
+        logger.exception(e)
+        await info_msg.edit_text("❌ Xatolik yuz berdi.")
+
+
     uid = cb.from_user.id
     idx = int(cb.data.removeprefix("dl_"))
     urls = search_cache.get(uid, [])
@@ -395,22 +472,66 @@ async def h_text(message: Message):
         msg = await message.answer("⬇️ Yuklanmoqda…")
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
-                aud = download_mp3(url.group(), Path(tmpdir))
-                await msg.edit_text(f"🎵 <b>{aud['title']}</b> — yuborilmoqda…")
-                await message.answer_audio(
-                    FSInputFile(aud["path"]),
-                    title=aud["title"],
-                    performer=aud["artist"],
-                )
+                vid_path = None
+                aud_path = None
+                title = "Noma'lum"
+
+                # 1) Video yuklash (asosiy format)
                 try:
-                    vid = download_video(url.group(), Path(tmpdir))
-                    if vid and Path(vid).exists():
-                        size = os.path.getsize(vid) / (1024 * 1024)
-                        if size <= 50:
-                            await message.answer_video(FSInputFile(vid))
+                    vid_path = download_video(url.group(), Path(tmpdir))
                 except Exception as ve:
                     logger.warning(f"Video yuklanmadi: {ve}")
+
+                # 2) Audio (MP3) yuklash
+                try:
+                    aud = download_mp3(url.group(), Path(tmpdir))
+                    aud_path = aud["path"]
+                    title = aud["title"]
+                except Exception as ae:
+                    logger.warning(f"Audio yuklanmadi: {ae}")
+
+                if not vid_path and not aud_path:
+                    await msg.edit_text("❌ Yuklab bo'lmadi.")
+                    return
+
                 await msg.delete()
+
+                # Videoni doimiy joyga ko'chiramiz (callback uchun kerak bo'lishi mumkin)
+                permanent_path = None
+                if vid_path and Path(vid_path).exists():
+                    permanent_dir = DOWNLOAD_DIR / str(message.from_user.id)
+                    permanent_dir.mkdir(parents=True, exist_ok=True)
+                    permanent_path = str(permanent_dir / Path(vid_path).name)
+                    if Path(vid_path).resolve() != Path(permanent_path).resolve():
+                        import shutil
+                        shutil.copy(vid_path, permanent_path)
+
+                kb = InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(text="🎵 Qo'shiqni topish", callback_data=f"findsong_{message.message_id}")
+                ]])
+
+                if permanent_path:
+                    video_cache[message.message_id] = permanent_path
+
+                sent = None
+                if vid_path and Path(vid_path).exists():
+                    size = os.path.getsize(vid_path) / (1024 * 1024)
+                    if size <= 50:
+                        sent = await message.answer_video(
+                            FSInputFile(vid_path),
+                            caption=f"🎬 <b>{title}</b>",
+                            reply_markup=kb if permanent_path else None,
+                        )
+                if aud_path and Path(aud_path).exists():
+                    await message.answer_audio(
+                        FSInputFile(aud_path),
+                        title=title,
+                        performer="",
+                    )
+                if not sent and permanent_path:
+                    # Video yuborilmagan bo'lsa ham tugmani audio xabariga bog'laymiz
+                    await message.answer("🎵 Videodagi qo'shiqni topish:", reply_markup=kb)
+
         except Exception as e:
             logger.exception(e)
             await msg.edit_text("❌ Yuklab bo'lmadi.")
@@ -479,6 +600,8 @@ async def h_doc(message: Message):
 # ── ISHGA TUSHIRISH ───────────────────────────
 async def main():
     db_init()
+    cleanup_old_files(max_age_hours=1)  # boshlanishda bir marta tozalash
+    asyncio.create_task(periodic_cleanup())
     logger.info("Bot ishga tushdi ✅")
     await dp.start_polling(bot)
 
