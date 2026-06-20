@@ -220,7 +220,7 @@ def download_mp3(query: str, out_dir: Path) -> dict:
 def download_video(url: str, out_dir: Path) -> str:
     ydl_opts = {
         "outtmpl": str(out_dir / "%(title)s.%(ext)s"),
-        "format": "bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best[ext=mp4]/best",
+        "format": "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best",
         "merge_output_format": "mp4",
         "quiet": True,
         "no_warnings": True,
@@ -236,6 +236,19 @@ def download_video(url: str, out_dir: Path) -> str:
             for f in Path(out_dir).glob("*.mp4"):
                 mp4 = str(f)
                 break
+        # Faylda video oqimi borligini tekshiramiz (audio-only bo'lib qolmaganmi)
+        if Path(mp4).exists():
+            try:
+                import subprocess
+                probe = subprocess.run(
+                    ["ffprobe", "-v", "error", "-select_streams", "v",
+                     "-show_entries", "stream=codec_type", "-of", "csv=p=0", mp4],
+                    capture_output=True, text=True, timeout=10,
+                )
+                if "video" not in probe.stdout:
+                    logger.warning(f"download_video: faylda video oqimi yo'q -> {mp4}")
+            except Exception as pe:
+                logger.warning(f"ffprobe tekshirishda xato: {pe}")
         return mp4
 
 async def recognize_audio(file_path: str) -> dict:
@@ -480,7 +493,7 @@ async def h_text(message: Message):
                 try:
                     vid_path = download_video(url.group(), Path(tmpdir))
                 except Exception as ve:
-                    logger.warning(f"Video yuklanmadi: {ve}")
+                    logger.exception(f"Video yuklanmadi: {ve}")
 
                 # 2) Audio (MP3) yuklash
                 try:
