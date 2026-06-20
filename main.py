@@ -488,19 +488,24 @@ async def h_text(message: Message):
         msg = await message.answer("⬇️ Yuklanmoqda…")
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
+                vid_dir = Path(tmpdir) / "vid"
+                aud_dir = Path(tmpdir) / "aud"
+                vid_dir.mkdir(exist_ok=True)
+                aud_dir.mkdir(exist_ok=True)
+
                 vid_path = None
                 aud_path = None
                 title = "Noma'lum"
 
-                # 1) Video yuklash (asosiy format)
+                # 1) Video yuklash (alohida papkada)
                 try:
-                    vid_path = download_video(url.group(), Path(tmpdir))
+                    vid_path = download_video(url.group(), vid_dir)
                 except Exception as ve:
                     logger.exception(f"Video yuklanmadi: {ve}")
 
-                # 2) Audio (MP3) yuklash
+                # 2) Audio (MP3) yuklash (alohida papkada)
                 try:
-                    aud = download_mp3(url.group(), Path(tmpdir))
+                    aud = download_mp3(url.group(), aud_dir)
                     aud_path = aud["path"]
                     title = aud["title"]
                 except Exception as ae:
@@ -532,12 +537,15 @@ async def h_text(message: Message):
                 sent = None
                 if vid_path and Path(vid_path).exists():
                     size = os.path.getsize(vid_path) / (1024 * 1024)
+                    logger.info(f"Video yuborishga tayyor: {vid_path} ({size:.2f} MB)")
                     if size <= 50:
                         sent = await message.answer_video(
                             FSInputFile(vid_path),
                             caption=f"🎬 <b>{title}</b>",
                             reply_markup=kb if permanent_path else None,
                         )
+                    else:
+                        logger.warning(f"Video juda katta ({size:.2f} MB), yuborilmadi")
                 if aud_path and Path(aud_path).exists():
                     await message.answer_audio(
                         FSInputFile(aud_path),
