@@ -501,6 +501,7 @@ async def h_admin_broadcast_catcher_media(message: Message):
     if not is_admin(uid):
         return
     pending = admin_pending_action.get(uid)
+    logger.info(f"[BROADCAST DEBUG] uid={uid}, pending={pending}")
     if not pending or pending.get("action") != "broadcast":
         return
     admin_pending_action.pop(uid, None)
@@ -687,10 +688,15 @@ async def h_admin_movie_file(message: Message):
     Forward qilingan fayllarda mime_type ba'zan aniq kelmasligi mumkin, shu sababli
     bu yerda mime_type tekshirilmaydi — faqat admin 'kino qo'shish' rejimida ekanligi tekshiriladi."""
     uid = message.from_user.id
+    logger.info(f"[KINO DEBUG] h_admin_movie_file chaqirildi: uid={uid}, is_admin={is_admin(uid)}, "
+                f"video={bool(message.video)}, document={bool(message.document)}")
     if not is_admin(uid):
+        logger.info("[KINO DEBUG] admin emas, return")
         return
     state = admin_movie_state.get(uid)
+    logger.info(f"[KINO DEBUG] state={state}")
     if not state or state.get("step") != "wait_file":
+        logger.info("[KINO DEBUG] state mos kelmadi, return")
         return  # admin kino qo'shish jarayonida emas -> boshqa handlerga o'tadi (h_video/h_doc)
 
     file_id = message.video.file_id if message.video else message.document.file_id
