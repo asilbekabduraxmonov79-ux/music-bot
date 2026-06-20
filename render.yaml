@@ -3,7 +3,7 @@ services:
     name: musicbot
     env: python
     plan: free
-    buildCommand: "pip install -r requirements.txt"
+    buildCommand: "pip install --prefer-binary -r requirements.txt"
     startCommand: "python main.py"
     envVars:
       - key: PYTHON_VERSION
