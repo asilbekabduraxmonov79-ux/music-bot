@@ -1,5 +1,4 @@
 aiogram==2.25.1
 aiohttp==3.9.5
-yt-dlp>=2025.6.30
-pydantic==1.10.19
+yt-dlp
 
