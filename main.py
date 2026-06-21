@@ -248,7 +248,7 @@ async def guard(message: Message) -> bool:
 
 # ── YT-DLP UMUMIY SOZLAMALAR ──
 YT_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
+    "User-Agent": "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
     "Accept-Language": "en-US,en;q=0.9",
 }
 _YT_COOKIES_SOURCE = "/etc/secrets/youtube_cookies.txt"
@@ -273,7 +273,7 @@ def _yt_extra_opts() -> dict:
     opts = {
         "extractor_args": {
             "youtube": {
-                "player_client": ["ios", "mweb", "web_safari", "web"],
+                "player_client": ["android", "web", "mweb"],
             }
         },
     }
