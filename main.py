@@ -322,7 +322,7 @@ def download_mp3(query: str, out_dir: Path) -> dict:
     search = query if is_url else f"ytsearch1:{query}"
     ydl_opts = {
         "outtmpl": str(out_dir / "%(title)s.%(ext)s"),
-        "format": "bestaudio/best",
+        "format": "best/bestaudio",
         "postprocessors": [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3",
@@ -412,7 +412,7 @@ def download_video(url: str, out_dir: Path) -> str:
     else:
         ydl_opts = {
             **base_opts,
-            "format": "(bestvideo+bestaudio/best)[vcodec!=none]",
+            "format": "best[vcodec!=none]/best",
             **_yt_extra_opts(),
         }
 
