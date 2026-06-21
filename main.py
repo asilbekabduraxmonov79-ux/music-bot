@@ -19,7 +19,7 @@ from aiogram.enums import ParseMode
 import yt_dlp
 
 # ══════════════════════════════════════════════
-BOT_TOKEN    = os.environ.get("BOT_TOKEN", "8684337468:AAH0DdUJZ0L90-aEcx7sFH0pFzsfiDTH__0")
+BOT_TOKEN    = os.environ.get("BOT_TOKEN", "8684337468:AAGhQ6rjhtvX-pUuYfmtnrA7SMVHIciIG6Q")
 ADMIN_IDS    = [5599261398]
 AUDD_TOKEN   = os.environ.get("AUDD_TOKEN", "test")
 _DATA_DIR = Path("/data") if Path("/data").exists() else Path(".")
@@ -251,30 +251,29 @@ YT_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept-Language": "en-US,en;q=0.9",
 }
-YOUTUBE_COOKIES_FILE = "youtube_cookies.txt"
+_YT_COOKIES_SOURCE = "/etc/secrets/youtube_cookies.txt"
+YOUTUBE_COOKIES_FILE = str(_DATA_DIR / "youtube_cookies.txt")
 
-def _write_cookies_from_env():
-    """YOUTUBE_COOKIES_CONTENT va INSTAGRAM_COOKIES_CONTENT env varlar orqali
-    yuborilgan cookies matnlarini faylga yozadi (Render kabi platformalarda
-    fayl yuklash mumkin emas, shu sababli matnni environment variable orqali olamiz)."""
-    yt_content = os.environ.get("YOUTUBE_COOKIES_CONTENT")
-    if yt_content:
-        Path(YOUTUBE_COOKIES_FILE).write_text(yt_content)
-        logger.info("YouTube cookies YOUTUBE_COOKIES_CONTENT dan yozildi.")
+def _setup_youtube_cookies():
+    """/etc/secrets/ read-only bo'lgani uchun, yt-dlp cookie faylni
+    o'zi qayta yozishga harakat qilganda xato bermasligi uchun,
+    faylni yoziladigan joyga (DATA_DIR) nusxalaymiz."""
+    try:
+        if Path(_YT_COOKIES_SOURCE).exists():
+            import shutil
+            shutil.copy(_YT_COOKIES_SOURCE, YOUTUBE_COOKIES_FILE)
+            logger.info(f"YouTube cookies {YOUTUBE_COOKIES_FILE}ga nusxalandi")
+    except Exception as e:
+        logger.warning(f"YouTube cookies nusxalashda xato: {e}")
 
-    ig_content = os.environ.get("INSTAGRAM_COOKIES_CONTENT")
-    if ig_content:
-        Path(INSTAGRAM_COOKIES_FILE).write_text(ig_content)
-        logger.info("Instagram cookies INSTAGRAM_COOKIES_CONTENT dan yozildi.")
-
-_write_cookies_from_env()
+_setup_youtube_cookies()
 
 def _yt_extra_opts() -> dict:
     """YouTube uchun qoshimcha sozlamalar."""
     opts = {
         "extractor_args": {
             "youtube": {
-                "player_client": ["ios", "android", "tv_embedded", "web"],
+                "player_client": ["tv_embedded", "android", "web"],
                 "player_skip": ["webpage"],
             }
         },
@@ -499,6 +498,20 @@ async def cmd_admin(message: Message):
                      InlineKeyboardButton(text="🛡 Adminlar ro'yxati", callback_data="adm_listadmins")])
     await message.answer("🔧 <b>Admin panel</b>", reply_markup=InlineKeyboardMarkup(inline_keyboard=btns))
 
+@router.message(F.photo | F.video | F.audio | F.document)
+async def h_admin_broadcast_catcher_media(message: Message):
+    """Admin 'Reklama' rejimida media xabarlarni broadcast qiladi."""
+    uid = message.from_user.id
+    if not is_admin(uid):
+        return
+    pending = admin_pending_action.get(uid)
+    if not pending or pending.get("action") != "broadcast":
+        return
+    admin_pending_action.pop(uid, None)
+    status = await message.answer("📣 Yuborilmoqda…")
+    await send_broadcast(message, status)
+
+
 
 @router.callback_query(F.data == "adm_users")
 async def cb_users(cb: CallbackQuery):
@@ -672,46 +685,33 @@ async def cmd_cancel(message: Message):
     if cleared:
         await message.answer("❌ Bekor qilindi.")
 
-@router.message(F.photo | F.video | F.audio | F.document)
-async def h_admin_media_router(message: Message):
-    """Admin uchun media xabarlarni ikki holatda ishlatadi:
-    1) Kino qo'shish jarayonida bo'lsa -> video/document faylni kino sifatida qabul qiladi
-    2) Reklama yuborish jarayonida bo'lsa -> hammaga broadcast qiladi
-    Ikkisi bitta funksiyada, chunki aiogram'da bir xil filtrli ikkita handler
-    ketma-ket turganda, birinchisi 'return' qilsa ham ikkinchisiga o'tmasligi mumkin."""
+@router.message(F.video | (F.document & F.document.mime_type.startswith("video")))
+async def h_admin_movie_file(message: Message):
+    """Admin kino qo'shish jarayonida bo'lsa, video faylni qabul qiladi."""
     uid = message.from_user.id
     if not is_admin(uid):
         return
+    state = admin_movie_state.get(uid)
+    if not state or state.get("step") != "wait_file":
+        return  # admin kino qo'shish jarayonida emas -> boshqa handlerga o'tadi (h_video/h_doc)
 
-    # 1) Kino qo'shish jarayoni (faqat video/document uchun)
-    movie_state = admin_movie_state.get(uid)
-    if (message.video or message.document) and movie_state and movie_state.get("step") == "wait_file":
-        file_id = message.video.file_id if message.video else message.document.file_id
-        title = (message.caption or "Noma'lum film").split("\n")[0][:80]
-        movie_state["file_id"] = file_id
-        movie_state["title"] = title
-        movie_state["caption"] = message.caption or ""
-        movie_state["step"] = "wait_code"
+    file_id = message.video.file_id if message.video else message.document.file_id
+    title = (message.caption or "Noma'lum film").split("\n")[0][:80]
+    state["file_id"] = file_id
+    state["title"] = title
+    state["caption"] = message.caption or ""
+    state["step"] = "wait_code"
 
-        suggested = db_next_movie_code()
-        kb = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text=f"✅ #{suggested} (taklif)", callback_data=f"usecode_{suggested}")
-        ]])
-        await message.answer(
-            f"🎬 Fayl qabul qilindi: <b>{title}</b>\n\n"
-            f"Endi shu kino uchun kod kiriting (faqat raqam, masalan: 4131),\n"
-            f"yoki taklif qilingan kodni tanlang. Foydalanuvchilar uni <code>#{suggested}</code> deb yozadi:",
-            reply_markup=kb,
-        )
-        return
-
-    # 2) Reklama (broadcast) jarayoni
-    pending = admin_pending_action.get(uid)
-    if pending and pending.get("action") == "broadcast":
-        admin_pending_action.pop(uid, None)
-        status = await message.answer("📣 Yuborilmoqda…")
-        await send_broadcast(message, status)
-        return
+    suggested = db_next_movie_code()
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text=f"✅ #{suggested} (taklif)", callback_data=f"usecode_{suggested}")
+    ]])
+    await message.answer(
+        f"🎬 Fayl qabul qilindi: <b>{title}</b>\n\n"
+        f"Endi shu kino uchun kod kiriting (faqat raqam, masalan: 4131),\n"
+        f"yoki taklif qilingan kodni tanlang. Foydalanuvchilar uni <code>#{suggested}</code> deb yozadi:",
+        reply_markup=kb,
+    )
 
 @router.callback_query(F.data.startswith("usecode_"))
 async def cb_usecode(cb: CallbackQuery):
