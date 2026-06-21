@@ -3,12 +3,12 @@ services:
     name: musicbot
     env: python
     plan: free
-    buildCommand: "pip install --prefer-binary -r requirements.txt"
+    buildCommand: "pip install -r requirements.txt"
     startCommand: "python main.py"
     envVars:
-      - key: PYTHON_VERSION
-        value: "3.11.9"
       - key: BOT_TOKEN
-        sync: false
-      - key: AUDD_TOKEN
-        sync: false
+        value: "8684337468:AAGhQ6rjhtvX-pUuYfmtnrA7SMVHIciIG6Q"
+      - key: ADMIN_IDS
+        value: "5599261398"
+      - key: PYTHON_VERSION
+        value: "3.10.12"
