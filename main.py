@@ -15,14 +15,12 @@ import yt_dlp
 import aiohttp
 from aiohttp import web
 
-# ══════════════════════════════════════════════
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 ADMIN_IDS = [5599261398]
 _DATA_DIR = Path(".")
 DOWNLOAD_DIR = _DATA_DIR / "downloads"
 DOWNLOAD_DIR.mkdir(exist_ok=True, parents=True)
 DB_PATH = str(_DATA_DIR / "bot.db")
-# ══════════════════════════════════════════════
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -208,20 +206,6 @@ async def guard(message: types.Message) -> bool:
         return False
     return True
 
-YT_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-}
-
-def _yt_extra_opts() -> dict:
-    return {
-        "extractor_args": {
-            "youtube": {
-                "player_client": ["android", "web"],
-                "skip": ["hls", "dash"],
-            }
-        },
-    }
-
 def fmt_duration(dur):
     if not dur:
         return "?"
@@ -237,8 +221,15 @@ def search_songs(query: str, count: int = 10) -> list:
         "no_warnings": True,
         "noplaylist": True,
         "extract_flat": True,
-        "http_headers": YT_HEADERS,
-        **_yt_extra_opts(),
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        },
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android", "web"],
+                "skip": ["hls", "dash"],
+            }
+        }
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(f"ytsearch{count}:{query}", download=False)
@@ -269,8 +260,15 @@ def download_mp3(query: str, out_dir: Path) -> dict:
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
-        "http_headers": YT_HEADERS,
-        **_yt_extra_opts(),
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        },
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android", "web"],
+                "skip": ["hls", "dash"],
+            }
+        }
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(search, download=True)
@@ -290,15 +288,16 @@ def download_mp3(query: str, out_dir: Path) -> dict:
     }
 
 def download_video(url: str, out_dir: Path) -> str:
-    is_instagram = 'instagram.com' in url
-    
-    base_opts = {
+    ydl_opts = {
         "outtmpl": str(out_dir / "%(title)s.%(ext)s"),
         "merge_output_format": "mp4",
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
-        "http_headers": YT_HEADERS,
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        },
+        "format": "best[height<=480][ext=mp4]/best[ext=mp4]/best",
         "extractor_args": {
             "youtube": {
                 "player_client": ["android", "web"],
@@ -306,18 +305,6 @@ def download_video(url: str, out_dir: Path) -> str:
             }
         }
     }
-    
-    if is_instagram:
-        ydl_opts = {
-            **base_opts,
-            "format": "best",
-        }
-    else:
-        ydl_opts = {
-            **base_opts,
-            "format": "best[height<=480][ext=mp4]/best[ext=mp4]/best",
-        }
-    
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
         filename = ydl.prepare_filename(info)
@@ -358,7 +345,7 @@ async def cmd_start(message: types.Message):
     await message.answer(
         "👋 <b>Salom!</b>\n\n"
         "🎵 Qo'shiq/xonanda nomi yozing → MP3\n"
-        "🔗 YouTube/Instagram link yuboring → Video + Audio\n"
+        "🔗 YouTube link yuboring → Video + Audio\n"
         "🎤 Audio/video yuboring → Qo'shiqni aniqlaydi"
     )
 
@@ -453,14 +440,12 @@ async def h_url(message: types.Message):
             title = "Noma'lum"
             try:
                 vid_path = download_video(url, vid_dir)
-                print(f"✅ Video yuklandi: {vid_path}")
             except Exception as e:
                 logger.exception(f"Video yuklanmadi: {e}")
             try:
                 aud = download_mp3(url, aud_dir)
                 aud_path = aud["path"]
                 title = aud["title"]
-                print(f"✅ Audio yuklandi: {aud_path}")
             except Exception as e:
                 logger.exception(f"Audio yuklanmadi: {e}")
             if not vid_path and not aud_path:
@@ -767,19 +752,14 @@ async def h_admin_numeric(message: types.Message):
 # Render uchun web server (port binding)
 # ══════════════════════════════════════════════
 async def start_web_server():
-    """Render uchun minimal web server"""
     try:
         app = web.Application()
-        
         async def health(request):
             return web.Response(text="Bot ishlayapti ✅")
-        
         app.router.add_get("/", health)
         app.router.add_get("/health", health)
-        
         runner = web.AppRunner(app)
         await runner.setup()
-        
         port = int(os.environ.get("PORT", 10000))
         site = web.TCPSite(runner, "0.0.0.0", port)
         await site.start()
@@ -787,15 +767,9 @@ async def start_web_server():
     except Exception as e:
         print(f"⚠️ Web server ishga tushmadi: {e}")
 
-# ══════════════════════════════════════════════
-# MAIN
-# ══════════════════════════════════════════════
 if __name__ == "__main__":
     db_init()
     logger.info("Bot ishga tushdi ✅")
-    
-    # Web serverni ishga tushirish (Render uchun)
     loop = asyncio.get_event_loop()
     loop.create_task(start_web_server())
-    
     executor.start_polling(dp, skip_updates=True)
