@@ -1,8 +1,3 @@
-import sys
-import os
-
-# Python versiyasini tekshirish
-print(f"Python version: {sys.version}")
 import asyncio
 import logging
 import os
@@ -20,7 +15,7 @@ import yt_dlp
 import aiohttp
 
 # ══════════════════════════════════════════════
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8684337468:AAH0DdUJZ0L90-aEcx7sFH0pFzsfiDTH__0")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 ADMIN_IDS = [5599261398]
 _DATA_DIR = Path(".")
 DOWNLOAD_DIR = _DATA_DIR / "downloads"
@@ -37,10 +32,8 @@ dp.middleware.setup(LoggingMiddleware())
 
 search_cache = {}
 video_cache = {}
-
 URL_RE = re.compile(r"https?://\S+")
 
-# ── DATABASE ──────────────────────────────────
 def db_init():
     con = sqlite3.connect(DB_PATH)
     con.execute("""CREATE TABLE IF NOT EXISTS required_channels (
@@ -188,7 +181,6 @@ def db_next_movie_code():
         n += 1
     return str(n)
 
-# ── MAJBURIY OBUNA ────────────────────────────
 async def check_subs(uid):
     not_joined = []
     for ch_id, name, link in db_get_channels():
@@ -215,7 +207,6 @@ async def guard(message: types.Message) -> bool:
         return False
     return True
 
-# ── YT-DLP SOZLAMALARI ──
 YT_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 }
@@ -239,10 +230,6 @@ def fmt_duration(dur):
         return "?"
     return f"{dur // 60}:{dur % 60:02d}"
 
-def is_instagram_url(url: str) -> bool:
-    return "instagram.com" in url.lower()
-
-# ── YUKLAB OLISH ──────────────────────────────
 def search_songs(query: str, count: int = 10) -> list:
     ydl_opts = {
         "quiet": True,
@@ -267,8 +254,7 @@ def search_songs(query: str, count: int = 10) -> list:
         return results
 
 def download_mp3(query: str, out_dir: Path) -> dict:
-    is_url = query.startswith("http")
-    search = query if is_url else f"ytsearch1:{query}"
+    search = query if query.startswith("http") else f"ytsearch1:{query}"
     ydl_opts = {
         "outtmpl": str(out_dir / "%(title)s.%(ext)s"),
         "format": "bestaudio[ext=m4a]/bestaudio/best",
@@ -282,7 +268,7 @@ def download_mp3(query: str, out_dir: Path) -> dict:
         "no_warnings": True,
         "noplaylist": True,
         "http_headers": YT_HEADERS,
-        "_yt_extra_opts": _yt_extra_opts(),
+        **_yt_extra_opts(),
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(search, download=True)
@@ -335,7 +321,6 @@ async def recognize_audio(file_path: str) -> dict:
         return {"title": r.get("title", ""), "artist": r.get("artist", "")}
     return {}
 
-# ── ISHGA TUSHIRISH ───────────────────────────
 def is_owner(uid): return uid in ADMIN_IDS
 def is_admin(uid): return uid in ADMIN_IDS or db_is_sub_admin(uid)
 
@@ -444,15 +429,13 @@ async def h_url(message: types.Message):
             aud_dir.mkdir(exist_ok=True)
             try:
                 vid_path = download_video(url, vid_dir)
-            except Exception as e:
-                logger.exception(f"Video yuklanmadi: {e}")
+            except:
                 vid_path = None
             try:
                 aud = download_mp3(url, aud_dir)
                 aud_path = aud["path"]
                 title = aud["title"]
-            except Exception as e:
-                logger.exception(f"Audio yuklanmadi: {e}")
+            except:
                 aud_path = None
                 title = "Noma'lum"
             if not vid_path and not aud_path:
@@ -568,7 +551,7 @@ async def cb_check(callback_query: types.CallbackQuery):
     else:
         await callback_query.answer("✅ Rahmat!")
         await callback_query.message.delete()
-        await callback_query.message.answer("✅ <b>Obuna tasdiqlandi!</b>\n\n🎵 Qo'shiq nomi yozing → MP3\n🔗 Link → video + MP3\n🎤 Audio → tanib yuklab beraman")
+        await callback_query.message.answer("✅ <b>Obuna tasdiqlandi!</b>")
 
 @dp.callback_query_handler(lambda c: c.data == "nav_close")
 async def cb_close(callback_query: types.CallbackQuery):
@@ -583,7 +566,6 @@ async def cb_admin(callback_query: types.CallbackQuery):
         await callback_query.answer("❌ Ruxsat yo'q!", show_alert=True)
         return
     await callback_query.answer()
-
     if data == "adm_list":
         chs = db_get_channels()
         if not chs:
@@ -606,10 +588,7 @@ async def cb_admin(callback_query: types.CallbackQuery):
         admin_pending_action[uid] = {"action": "broadcast"}
         await callback_query.message.answer("📣 Reklama xabarini yuboring.\n❌ Bekor: /cancel")
     elif data == "adm_users":
-        await callback_query.answer(
-            f"👥 Jami: {db_user_count()}\n🚫 Bloklangan: {db_banned_count()}",
-            show_alert=True
-        )
+        await callback_query.answer(f"👥 Jami: {db_user_count()}\n🚫 Bloklangan: {db_banned_count()}", show_alert=True)
     elif data == "adm_ban":
         admin_pending_action[uid] = {"action": "ban"}
         await callback_query.message.answer("🚫 Bloklash uchun foydalanuvchi ID raqamini yuboring.\n❌ Bekor: /cancel")
@@ -759,8 +738,40 @@ async def h_admin_numeric(message: types.Message):
             await message.answer(f"🛡 Foydalanuvchi <code>{target}</code> yordamchi admin.")
         return
 
-# ── MAIN ──────────────────────────────────────
+# ══════════════════════════════════════════════
+# Render uchun web server (port binding)
+# ══════════════════════════════════════════════
+async def start_web_server():
+    """Render uchun minimal web server"""
+    try:
+        from aiohttp import web
+        
+        async def health(request):
+            return web.Response(text="Bot ishlayapti ✅")
+        
+        app = web.Application()
+        app.router.add_get("/", health)
+        app.router.add_get("/health", health)
+        
+        runner = web.AppRunner(app)
+        await runner.setup()
+        
+        port = int(os.environ.get("PORT", 10000))
+        site = web.TCPSite(runner, "0.0.0.0", port)
+        await site.start()
+        print(f"✅ Web server {port}-portda ishga tushdi")
+    except Exception as e:
+        print(f"⚠️ Web server ishga tushmadi: {e}")
+
+# ══════════════════════════════════════════════
+# MAIN
+# ══════════════════════════════════════════════
 if __name__ == "__main__":
     db_init()
     logger.info("Bot ishga tushdi ✅")
+    
+    # Web serverni ishga tushirish (Render uchun)
+    loop = asyncio.get_event_loop()
+    loop.create_task(start_web_server())
+    
     executor.start_polling(dp, skip_updates=True)
