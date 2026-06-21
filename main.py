@@ -1,3 +1,8 @@
+import sys
+import os
+
+# Python versiyasini tekshirish
+print(f"Python version: {sys.version}")
 import asyncio
 import logging
 import os
