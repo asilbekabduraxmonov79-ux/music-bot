@@ -13,6 +13,7 @@ from aiogram.utils import executor
 
 import yt_dlp
 import aiohttp
+from aiohttp import web
 
 # ══════════════════════════════════════════════
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
@@ -254,7 +255,8 @@ def search_songs(query: str, count: int = 10) -> list:
         return results
 
 def download_mp3(query: str, out_dir: Path) -> dict:
-    search = query if query.startswith("http") else f"ytsearch1:{query}"
+    is_url = query.startswith("http")
+    search = query if is_url else f"ytsearch1:{query}"
     ydl_opts = {
         "outtmpl": str(out_dir / "%(title)s.%(ext)s"),
         "format": "bestaudio[ext=m4a]/bestaudio/best",
@@ -288,6 +290,8 @@ def download_mp3(query: str, out_dir: Path) -> dict:
     }
 
 def download_video(url: str, out_dir: Path) -> str:
+    is_instagram = 'instagram.com' in url
+    
     base_opts = {
         "outtmpl": str(out_dir / "%(title)s.%(ext)s"),
         "merge_output_format": "mp4",
@@ -295,8 +299,25 @@ def download_video(url: str, out_dir: Path) -> str:
         "no_warnings": True,
         "noplaylist": True,
         "http_headers": YT_HEADERS,
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android", "web"],
+                "skip": ["hls", "dash"],
+            }
+        }
     }
-    ydl_opts = {**base_opts, "format": "best[height<=480][ext=mp4]/best[ext=mp4]/best", **_yt_extra_opts()}
+    
+    if is_instagram:
+        ydl_opts = {
+            **base_opts,
+            "format": "best",
+        }
+    else:
+        ydl_opts = {
+            **base_opts,
+            "format": "best[height<=480][ext=mp4]/best[ext=mp4]/best",
+        }
+    
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
         filename = ydl.prepare_filename(info)
@@ -337,7 +358,7 @@ async def cmd_start(message: types.Message):
     await message.answer(
         "👋 <b>Salom!</b>\n\n"
         "🎵 Qo'shiq/xonanda nomi yozing → MP3\n"
-        "🔗 YouTube link yuboring → Video + Audio\n"
+        "🔗 YouTube/Instagram link yuboring → Video + Audio\n"
         "🎤 Audio/video yuboring → Qo'shiqni aniqlaydi"
     )
 
@@ -427,17 +448,21 @@ async def h_url(message: types.Message):
             aud_dir = Path(tmpdir) / "aud"
             vid_dir.mkdir(exist_ok=True)
             aud_dir.mkdir(exist_ok=True)
+            vid_path = None
+            aud_path = None
+            title = "Noma'lum"
             try:
                 vid_path = download_video(url, vid_dir)
-            except:
-                vid_path = None
+                print(f"✅ Video yuklandi: {vid_path}")
+            except Exception as e:
+                logger.exception(f"Video yuklanmadi: {e}")
             try:
                 aud = download_mp3(url, aud_dir)
                 aud_path = aud["path"]
                 title = aud["title"]
-            except:
-                aud_path = None
-                title = "Noma'lum"
+                print(f"✅ Audio yuklandi: {aud_path}")
+            except Exception as e:
+                logger.exception(f"Audio yuklanmadi: {e}")
             if not vid_path and not aud_path:
                 await msg.edit_text("❌ Yuklab bo'lmadi.")
                 return
@@ -744,12 +769,11 @@ async def h_admin_numeric(message: types.Message):
 async def start_web_server():
     """Render uchun minimal web server"""
     try:
-        from aiohttp import web
+        app = web.Application()
         
         async def health(request):
             return web.Response(text="Bot ishlayapti ✅")
         
-        app = web.Application()
         app.router.add_get("/", health)
         app.router.add_get("/health", health)
         
