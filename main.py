@@ -19,17 +19,14 @@ from aiogram.enums import ParseMode
 import yt_dlp
 
 # ══════════════════════════════════════════════
-BOT_TOKEN    = os.environ.get("BOT_TOKEN", "8684337468:AAGhQ6rjhtvX-pUuYfmtnrA7SMVHIciIG6Q")
+BOT_TOKEN    = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 ADMIN_IDS    = [5599261398]
 AUDD_TOKEN   = os.environ.get("AUDD_TOKEN", "test")
-_DATA_DIR = Path("/data") if Path("/data").exists() else Path(".")
+_DATA_DIR = Path(".")
 DOWNLOAD_DIR = _DATA_DIR / "downloads"
 DOWNLOAD_DIR.mkdir(exist_ok=True, parents=True)
 DB_PATH      = str(_DATA_DIR / "bot.db")
-# Instagram'dan video yuklash uchun cookies fayli (ixtiyoriy).
-# Brauzerdan Instagram'ga login qilib, "Get cookies.txt" kengaytmasi bilan
-# eksport qilib, shu nomdagi faylga joylashtiring. Fayl bo'lmasa muammo emas,
-# kod cookies'siz ham ishlashga harakat qiladi.
+# Instagram cookies (ixtiyoriy)
 INSTAGRAM_COOKIES_FILE = "instagram_cookies.txt"
 # ══════════════════════════════════════════════
 
@@ -40,7 +37,6 @@ search_cache: dict = {}
 video_cache: dict = {}
 
 def cleanup_old_files(max_age_hours: int = 1):
-    """downloads/ papkasidagi eski fayllarni o'chiradi."""
     import time
     now = time.time()
     max_age = max_age_hours * 3600
@@ -60,7 +56,6 @@ def cleanup_old_files(max_age_hours: int = 1):
             pass
 
 async def periodic_cleanup():
-    """Har 30 daqiqada eski fayllarni tozalaydi."""
     while True:
         try:
             cleanup_old_files(max_age_hours=1)
@@ -89,12 +84,11 @@ def db_init():
     con.execute("""CREATE TABLE IF NOT EXISTS admins (
         user_id INTEGER PRIMARY KEY, username TEXT, added_by INTEGER)""")
     con.commit()
-    # eski bazalarda 'banned' ustuni bo'lmasligi mumkin — qo'shamiz
     try:
         con.execute("ALTER TABLE users ADD COLUMN banned INTEGER DEFAULT 0")
         con.commit()
     except sqlite3.OperationalError:
-        pass  # ustun allaqachon bor
+        pass
     con.close()
 
 def db_add_channel(ch_id, name, link):
@@ -127,7 +121,6 @@ def db_all_users():
     rows = con.execute("SELECT user_id FROM users WHERE banned=0").fetchall()
     con.close(); return [r[0] for r in rows]
 
-# ── BLOKLASH ───────────────────────────────────
 def db_ban_user(uid: int):
     con = sqlite3.connect(DB_PATH)
     con.execute("UPDATE users SET banned=1 WHERE user_id=?", (uid,))
@@ -154,7 +147,6 @@ def db_banned_count():
     c = con.execute("SELECT COUNT(*) FROM users WHERE banned=1").fetchone()[0]
     con.close(); return c
 
-# ── YORDAMCHI ADMINLAR ────────────────────────
 def db_add_admin(uid: int, uname: str, added_by: int):
     con = sqlite3.connect(DB_PATH)
     con.execute("INSERT OR REPLACE INTO admins VALUES (?,?,?)", (uid, uname, added_by))
@@ -176,7 +168,6 @@ def db_is_sub_admin(uid: int) -> bool:
     con.close()
     return bool(row)
 
-# ── KINO KODLARI ──────────────────────────────
 def db_add_movie(code: str, file_id: str, title: str, caption: str = ""):
     con = sqlite3.connect(DB_PATH)
     con.execute("INSERT OR REPLACE INTO movies VALUES (?,?,?,?)", (code, file_id, title, caption))
@@ -206,7 +197,6 @@ def db_movie_count():
     con.close(); return c
 
 def db_next_movie_code() -> str:
-    """Bo'sh raqamli kodlardan eng kichigini topadi (1 dan boshlab)."""
     con = sqlite3.connect(DB_PATH)
     rows = con.execute("SELECT code FROM movies").fetchall()
     con.close()
@@ -246,40 +236,21 @@ async def guard(message: Message) -> bool:
         return False
     return True
 
-# ── YT-DLP UMUMIY SOZLAMALAR ──
+# ── YT-DLP SOZLAMALARI ──
 YT_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept-Language": "en-US,en;q=0.9",
 }
-_YT_COOKIES_SOURCE = "/etc/secrets/youtube_cookies.txt"
-YOUTUBE_COOKIES_FILE = str(_DATA_DIR / "youtube_cookies.txt")
-
-def _setup_youtube_cookies():
-    """/etc/secrets/ read-only bo'lgani uchun, yt-dlp cookie faylni
-    o'zi qayta yozishga harakat qilganda xato bermasligi uchun,
-    faylni yoziladigan joyga (DATA_DIR) nusxalaymiz."""
-    try:
-        if Path(_YT_COOKIES_SOURCE).exists():
-            import shutil
-            shutil.copy(_YT_COOKIES_SOURCE, YOUTUBE_COOKIES_FILE)
-            logger.info(f"YouTube cookies {YOUTUBE_COOKIES_FILE}ga nusxalandi")
-    except Exception as e:
-        logger.warning(f"YouTube cookies nusxalashda xato: {e}")
-
-_setup_youtube_cookies()
 
 def _yt_extra_opts() -> dict:
-    """YouTube uchun qoshimcha sozlamalar."""
-    opts = {
+    return {
         "extractor_args": {
             "youtube": {
-                "player_client": ["android"],
+                "player_client": ["android", "web"],
+                "skip": ["hls", "dash"],
             }
         },
     }
-    if Path(YOUTUBE_COOKIES_FILE).exists():
-        opts["cookiefile"] = YOUTUBE_COOKIES_FILE
-    return opts
 
 def fmt_duration(dur) -> str:
     if not dur:
@@ -322,7 +293,7 @@ def download_mp3(query: str, out_dir: Path) -> dict:
     search = query if is_url else f"ytsearch1:{query}"
     ydl_opts = {
         "outtmpl": str(out_dir / "%(title)s.%(ext)s"),
-        "format": "best/bestaudio",
+        "format": "bestaudio[ext=m4a]/bestaudio/best",
         "postprocessors": [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3",
@@ -336,19 +307,13 @@ def download_mp3(query: str, out_dir: Path) -> dict:
         "noplaylist": True,
         "http_headers": YT_HEADERS,
         "match_filter": yt_dlp.utils.match_filter_func("!is_live"),
+        **_yt_extra_opts(),
     }
     if is_url and is_instagram_url(search) and Path(INSTAGRAM_COOKIES_FILE).exists():
         ydl_opts["cookiefile"] = INSTAGRAM_COOKIES_FILE
-    if not is_url or not is_instagram_url(search):
-        ydl_opts.update(_yt_extra_opts())
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(search, download=True)
-    except yt_dlp.utils.DownloadError:
-        # Ffprobe audio kodekni topa olmasa — video formatdan to'g'ridan-to'g'ri MP3 chiqaramiz
-        ydl_opts["format"] = "best"
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(search, download=True)
+    
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(search, download=True)
     if "entries" in info:
         info = info["entries"][0]
     filename = ydl.prepare_filename(info)
@@ -365,7 +330,6 @@ def download_mp3(query: str, out_dir: Path) -> dict:
     }
 
 def _probe_has_video(path: str) -> bool:
-    """Faylda haqiqiy video oqimi (rasm-thumbnail emas) borligini tekshiradi."""
     try:
         import subprocess
         probe = subprocess.run(
@@ -374,9 +338,8 @@ def _probe_has_video(path: str) -> bool:
             capture_output=True, text=True, timeout=10,
         )
         return "video" in probe.stdout
-    except Exception as pe:
-        logger.warning(f"ffprobe tekshirishda xato: {pe}")
-        return True  # tekshira olmasak, bloklamaymiz
+    except Exception:
+        return True
 
 def download_video(url: str, out_dir: Path) -> str:
     instagram = is_instagram_url(url)
@@ -391,69 +354,29 @@ def download_video(url: str, out_dir: Path) -> str:
     }
 
     if instagram:
-        # Instagram'da odatda video+audio bitta formatda keladi.
-        # "bestvideo+bestaudio" majburlash ko'pincha mos format topa olmay,
-        # yt-dlp'ni faqat audio-only formatga qaytarishga majbur qiladi.
-        # Shu sababli "best" ishlatamiz va vcodec!=none bo'lgan formatlarga
-        # ustunlik beramiz.
         ydl_opts = {
             **base_opts,
             "format": "best[vcodec!=none]/best",
         }
-        # Agar cookies fayli mavjud bo'lsa, ulaymiz (login talab qiladigan
-        # yoki cheklangan postlar uchun foydali).
         if Path(INSTAGRAM_COOKIES_FILE).exists():
             ydl_opts["cookiefile"] = INSTAGRAM_COOKIES_FILE
-        else:
-            logger.warning(
-                f"{INSTAGRAM_COOKIES_FILE} topilmadi — cookies'siz urinilmoqda. "
-                "Agar Instagram doim faqat audio bersa, cookies fayl qo'shing."
-            )
     else:
+        # YOUTUBE - tuzatilgan format
         ydl_opts = {
             **base_opts,
-            "format": "best[vcodec!=none]/best",
+            "format": "best[height<=480][ext=mp4]/best[ext=mp4]/best",
             **_yt_extra_opts(),
         }
 
-    def _run(opts: dict):
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            filename = ydl.prepare_filename(info)
-            return ydl, info, filename
-
-    ydl, info, filename = _run(ydl_opts)
-    mp4 = str(Path(filename).with_suffix(".mp4"))
-    if not Path(mp4).exists():
-        for f in Path(out_dir).glob("*.mp4"):
-            mp4 = str(f)
-            break
-
-    has_video = _probe_has_video(mp4) if Path(mp4).exists() else False
-    logger.info(f"download_video: {mp4} | instagram={instagram} | video stream bor: {has_video}")
-
-    # Instagram uchun: agar birinchi urinish audio-only chiqsa, "best" formatdagi
-    # boshqa variantlarni avtomatik qayta sinab ko'ramiz (fallback).
-    if instagram and not has_video:
-        logger.warning("Instagram: birinchi format audio-only chiqdi, fallback bilan qayta urinilmoqda…")
-        fallback_opts = {**ydl_opts, "format": "best"}
-        try:
-            for old in Path(out_dir).glob("*"):
-                old.unlink()
-        except Exception:
-            pass
-        ydl, info, filename = _run(fallback_opts)
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        filename = ydl.prepare_filename(info)
         mp4 = str(Path(filename).with_suffix(".mp4"))
         if not Path(mp4).exists():
             for f in Path(out_dir).glob("*.mp4"):
                 mp4 = str(f)
                 break
-        has_video = _probe_has_video(mp4) if Path(mp4).exists() else False
-        logger.info(f"download_video (fallback): {mp4} | video stream bor: {has_video}")
-
-    if not has_video:
-        raise yt_dlp.utils.DownloadError("Faylda video oqimi topilmadi (audio-only)")
-    return mp4
+        return mp4
 
 async def recognize_audio(file_path: str) -> dict:
     url = "https://api.audd.io/"
@@ -473,7 +396,6 @@ async def recognize_audio(file_path: str) -> dict:
 def is_owner(uid): return uid in ADMIN_IDS
 def is_admin(uid): return uid in ADMIN_IDS or db_is_sub_admin(uid)
 
-# Admin "kino qo'shish" jarayonidagi holatni saqlaymiz: {admin_id: {"step":..., "file_id":..., "title":...}}
 admin_movie_state: dict = {}
 
 @router.message(Command("admin"))
@@ -499,7 +421,6 @@ async def cmd_admin(message: Message):
 
 @router.message(F.photo | F.video | F.audio | F.document)
 async def h_admin_broadcast_catcher_media(message: Message):
-    """Admin 'Reklama' rejimida media xabarlarni broadcast qiladi."""
     uid = message.from_user.id
     if not is_admin(uid):
         return
@@ -510,8 +431,6 @@ async def h_admin_broadcast_catcher_media(message: Message):
     status = await message.answer("📣 Yuborilmoqda…")
     await send_broadcast(message, status)
 
-
-
 @router.callback_query(F.data == "adm_users")
 async def cb_users(cb: CallbackQuery):
     if not is_admin(cb.from_user.id): return
@@ -520,8 +439,6 @@ async def cb_users(cb: CallbackQuery):
         show_alert=True,
     )
 
-# Admin'dan qo'shimcha matn kutilayotgan kichik harakatlar uchun holat:
-# {"action": "ban"/"unban"/"addadmin"}
 admin_pending_action: dict = {}
 
 @router.callback_query(F.data == "adm_ban")
@@ -529,9 +446,7 @@ async def cb_ban(cb: CallbackQuery):
     if not is_admin(cb.from_user.id): return
     admin_pending_action[cb.from_user.id] = {"action": "ban"}
     await cb.message.answer(
-        "🚫 Bloklash uchun foydalanuvchi ID raqamini yuboring.\n"
-        "(ID ni /admin → 👥 orqali emas, foydalanuvchi botga yozganda ko'rasiz, "
-        "yoki @userinfobot orqali bilib olishingiz mumkin)\n\n❌ Bekor: /cancel"
+        "🚫 Bloklash uchun foydalanuvchi ID raqamini yuboring.\n❌ Bekor: /cancel"
     )
     await cb.answer()
 
@@ -557,9 +472,7 @@ async def cb_do_unban(cb: CallbackQuery):
 async def cb_addadmin(cb: CallbackQuery):
     if not is_owner(cb.from_user.id): return
     admin_pending_action[cb.from_user.id] = {"action": "addadmin"}
-    await cb.message.answer(
-        "🛡 Yangi yordamchi admin qo'shish uchun uning ID raqamini yuboring.\n\n❌ Bekor: /cancel"
-    )
+    await cb.message.answer("🛡 Admin ID raqamini yuboring.\n❌ Bekor: /cancel")
     await cb.answer()
 
 @router.callback_query(F.data == "adm_listadmins")
@@ -595,9 +508,8 @@ async def cb_list(cb: CallbackQuery):
 @router.callback_query(F.data == "adm_add")
 async def cb_add(cb: CallbackQuery):
     if not is_admin(cb.from_user.id): return
-    await cb.message.answer(
-        "Format:\n<code>/addch @username Kanal nomi https://t.me/link</code>"
-    ); await cb.answer()
+    await cb.message.answer("Format:\n<code>/addch @username Kanal nomi https://t.me/link</code>")
+    await cb.answer()
 
 @router.callback_query(F.data == "adm_del")
 async def cb_del(cb: CallbackQuery):
@@ -621,19 +533,16 @@ async def cb_ads(cb: CallbackQuery):
     if not is_admin(cb.from_user.id): return
     admin_pending_action[cb.from_user.id] = {"action": "broadcast"}
     await cb.message.answer(
-        "📣 Reklama uchun xabar yuboring — matn, rasm, video yoki audio bo'lishi mumkin "
-        "(rasm/video/audio'ga izoh/caption ham qo'shsangiz bo'ladi).\n\n❌ Bekor: /cancel"
+        "📣 Reklama xabarini yuboring.\n❌ Bekor: /cancel"
     )
     await cb.answer()
 
-# ── KINO QO'SHISH / O'CHIRISH / RO'YXAT ───────
 @router.callback_query(F.data == "adm_movie_add")
 async def cb_movie_add(cb: CallbackQuery):
     if not is_admin(cb.from_user.id): return
     admin_movie_state[cb.from_user.id] = {"step": "wait_file"}
     await cb.message.answer(
-        "🎬 Kino faylini (video yoki video-document) menga forward qiling yoki yuboring.\n\n"
-        "❌ Bekor qilish uchun /cancel yozing."
+        "🎬 Kino faylini yuboring.\n❌ Bekor: /cancel"
     )
     await cb.answer()
 
@@ -686,13 +595,12 @@ async def cmd_cancel(message: Message):
 
 @router.message(F.video | (F.document & F.document.mime_type.startswith("video")))
 async def h_admin_movie_file(message: Message):
-    """Admin kino qo'shish jarayonida bo'lsa, video faylni qabul qiladi."""
     uid = message.from_user.id
     if not is_admin(uid):
         return
     state = admin_movie_state.get(uid)
     if not state or state.get("step") != "wait_file":
-        return  # admin kino qo'shish jarayonida emas -> boshqa handlerga o'tadi (h_video/h_doc)
+        return
 
     file_id = message.video.file_id if message.video else message.document.file_id
     title = (message.caption or "Noma'lum film").split("\n")[0][:80]
@@ -707,8 +615,7 @@ async def h_admin_movie_file(message: Message):
     ]])
     await message.answer(
         f"🎬 Fayl qabul qilindi: <b>{title}</b>\n\n"
-        f"Endi shu kino uchun kod kiriting (faqat raqam, masalan: 4131),\n"
-        f"yoki taklif qilingan kodni tanlang. Foydalanuvchilar uni <code>#{suggested}</code> deb yozadi:",
+        f"Kod kiriting (faqat raqam):",
         reply_markup=kb,
     )
 
@@ -726,7 +633,6 @@ async def cb_usecode(cb: CallbackQuery):
 
 @router.message(F.text.regexp(r"^#\d{1,10}$"))
 async def h_movie_code_lookup(message: Message):
-    """Foydalanuvchi #raqam yozganda kino yuboradi (masalan: #4131)."""
     uid = message.from_user.id
     code = message.text.strip().removeprefix("#")
 
@@ -734,7 +640,7 @@ async def h_movie_code_lookup(message: Message):
     db_add_user(uid, message.from_user.username or "")
     movie = db_get_movie(code)
     if not movie:
-        await message.answer("❓ Bu kodga mos kino topilmadi. Kodni tekshirib qayta yuboring.\nMasalan: <code>#4131</code>")
+        await message.answer("❓ Bu kodga mos kino topilmadi.")
         return
     try:
         await message.answer_video(
@@ -747,25 +653,22 @@ async def h_movie_code_lookup(message: Message):
 
 @router.message(F.text.regexp(r"^\d{1,15}$"))
 async def h_admin_numeric_input(message: Message):
-    """Admindan kutilayotgan raqamli kiritishlar: kino kodi, ban/unban/addadmin ID."""
     uid = message.from_user.id
     text = message.text.strip()
 
     if not is_admin(uid):
-        return  # oddiy foydalanuvchidan kelgan raqam — e'tiborsiz qoldiramiz
+        return
 
-    # 1) Kino kodi kiritish jarayoni
     movie_state = admin_movie_state.get(uid)
     if movie_state and movie_state.get("step") == "wait_code":
         if db_get_movie(text):
-            await message.answer(f"⚠️ Kod {text} band. Boshqa kod kiriting yoki taklif qilinganini tanlang.")
+            await message.answer(f"⚠️ Kod {text} band.")
             return
         db_add_movie(text, movie_state["file_id"], movie_state["title"], movie_state.get("caption", ""))
         admin_movie_state.pop(uid, None)
         await message.answer(f"✅ Kino <b>{movie_state['title']}</b> kod <b>#{text}</b> bilan saqlandi.")
         return
 
-    # 2) Ban / Unban / Admin qo'shish jarayoni
     pending = admin_pending_action.get(uid)
     if pending:
         action = pending["action"]
@@ -783,7 +686,7 @@ async def h_admin_numeric_input(message: Message):
             if not is_owner(uid):
                 return
             db_add_admin(target, "", uid)
-            await message.answer(f"🛡 Foydalanuvchi <code>{target}</code> endi yordamchi admin.")
+            await message.answer(f"🛡 Foydalanuvchi <code>{target}</code> yordamchi admin.")
         return
 
 @router.message(Command("addch"))
@@ -796,7 +699,6 @@ async def cmd_addch(message: Message):
     await message.answer(f"✅ <b>{p[2]}</b> qo'shildi")
 
 async def send_broadcast(source_message: Message, status_message: Message):
-    """Berilgan xabarni (matn/rasm/video/audio — istalgan turi) barcha foydalanuvchilarga nusxalaydi."""
     users = db_all_users()
     ok = 0
     for uid in users:
@@ -813,7 +715,7 @@ async def cmd_ads(message: Message):
     if not is_admin(message.from_user.id): return
     text = message.text.removeprefix("/ads").strip()
     if not text:
-        await message.answer("❗ Matn bo'sh! Yoki /admin → 📣 Reklama orqali rasm/video/audio ham yuborishingiz mumkin."); return
+        await message.answer("❗ Matn bo'sh!"); return
     users = db_all_users()
     msg = await message.answer(f"📣 {len(users)} ta foydalanuvchiga yuborilmoqda…")
     ok = 0
@@ -834,9 +736,9 @@ async def cmd_start(message: Message):
         await message.answer("⚠️ Avval obuna bo'ling:", reply_markup=sub_kb(nj)); return
     await message.answer(
         "👋 <b>Salom!</b>\n\n"
-        "🎵 Qo'shiq/xonanda nomi yozing → MP3 yuklab beraman\n"
-        "🔗 Link yuboring → video + MP3 yuklab beraman\n"
-        "🎤 Audio/video yuboring → qo'shiqni tanib yuklab beraman"
+        "🎵 Qo'shiq/xonanda nomi yozing → MP3\n"
+        "🔗 YouTube/Instagram link yuboring → Video + Audio\n"
+        "🎤 Audio/video yuboring → Qo'shiqni aniqlaydi"
     )
 
 @router.callback_query(F.data == "check_sub")
@@ -854,7 +756,7 @@ async def cb_check(cb: CallbackQuery):
             "🎤 Audio → tanib yuklab beraman"
         )
 
-# ── QIDIRUV NATIJALARI (raqamli ro'yxat uslubida) ──
+# ── QIDIRUV ────────────────────────────────────
 def build_results_text(query: str, results: list) -> str:
     lines = [f"🔍 {query}", ""]
     for i, r in enumerate(results, start=1):
@@ -882,7 +784,6 @@ async def cb_nav_close(cb: CallbackQuery):
 
 @router.callback_query(F.data.startswith("findsong_"))
 async def cb_find_song(cb: CallbackQuery):
-    """Video tarkibidagi qo'shiqni tanib, MP3 yuklab beradi."""
     try:
         msg_id = int(cb.data.removeprefix("findsong_"))
     except ValueError:
@@ -896,13 +797,8 @@ async def cb_find_song(cb: CallbackQuery):
     await cb.answer("🎧 Tekshirilmoqda…")
     info_msg = await cb.message.answer("🎧 Qo'shiq tanib olinmoqda…")
     try:
-        # Videodan audio chiqarib, tanib olishga yuboramiz
         with tempfile.TemporaryDirectory() as tmpdir:
             audio_path = str(Path(tmpdir) / "extract.mp3")
-            ydl_opts = {
-                "quiet": True, "no_warnings": True,
-            }
-            # ffmpeg orqali videodan audio ajratamiz
             import subprocess
             subprocess.run(
                 ["ffmpeg", "-y", "-i", vid_path, "-vn", "-acodec", "libmp3lame", audio_path],
@@ -963,7 +859,7 @@ async def cb_download_song(cb: CallbackQuery):
 async def h_text(message: Message):
     uid = message.from_user.id
     text = message.text.strip()
-    # Admin broadcast rejimida bo'lsa va command bo'lmasa — broadcast qilamiz
+    
     if is_admin(uid) and not text.startswith("/"):
         pending = admin_pending_action.get(uid)
         if pending and pending.get("action") == "broadcast":
@@ -971,6 +867,7 @@ async def h_text(message: Message):
             status = await message.answer("📣 Yuborilmoqda…")
             await send_broadcast(message, status)
             return
+    
     if not await guard(message): return
     db_add_user(uid, message.from_user.username or "")
     url  = URL_RE.search(text)
@@ -988,13 +885,13 @@ async def h_text(message: Message):
                 aud_path = None
                 title = "Noma'lum"
 
-                # 1) Video yuklash (alohida papkada)
+                # 1) Video yuklash
                 try:
                     vid_path = download_video(url.group(), vid_dir)
                 except Exception as ve:
                     logger.exception(f"Video yuklanmadi: {ve}")
 
-                # 2) Audio (MP3) yuklash (alohida papkada)
+                # 2) Audio yuklash
                 try:
                     aud = download_mp3(url.group(), aud_dir)
                     aud_path = aud["path"]
@@ -1008,7 +905,6 @@ async def h_text(message: Message):
 
                 await msg.delete()
 
-                # Videoni doimiy joyga ko'chiramiz (callback uchun kerak bo'lishi mumkin)
                 permanent_path = None
                 if vid_path and Path(vid_path).exists():
                     permanent_dir = DOWNLOAD_DIR / str(message.from_user.id)
@@ -1025,27 +921,19 @@ async def h_text(message: Message):
                 if permanent_path:
                     video_cache[message.message_id] = permanent_path
 
-                sent = None
                 if vid_path and Path(vid_path).exists():
                     size = os.path.getsize(vid_path) / (1024 * 1024)
-                    logger.info(f"Video yuborishga tayyor: {vid_path} ({size:.2f} MB)")
                     if size <= 50:
-                        sent = await message.answer_video(
+                        await message.answer_video(
                             FSInputFile(vid_path),
                             caption=f"🎬 <b>{title}</b>",
                             reply_markup=kb if permanent_path else None,
                         )
-                    else:
-                        logger.warning(f"Video juda katta ({size:.2f} MB), yuborilmadi")
                 if aud_path and Path(aud_path).exists():
                     await message.answer_audio(
                         FSInputFile(aud_path),
                         title=title,
-                        performer="",
                     )
-                if not sent and permanent_path:
-                    # Video yuborilmagan bo'lsa ham tugmani audio xabariga bog'laymiz
-                    await message.answer("🎵 Videodagi qo'shiqni topish:", reply_markup=kb)
 
         except Exception as e:
             logger.exception(e)
@@ -1113,28 +1001,10 @@ async def h_doc(message: Message):
         await _handle_audio(message, message.document.file_id)
 
 # ── ISHGA TUSHIRISH ───────────────────────────
-async def _start_dummy_web_server():
-    """Render.com Web Service uchun: portni tinglovchi minimal HTTP server.
-    Bot ishi polling orqali davom etadi, bu server faqat 'tirikman' signali beradi."""
-    from aiohttp import web
-
-    async def health(_request):
-        return web.Response(text="Bot ishlayapti ✅")
-
-    app = web.Application()
-    app.router.add_get("/", health)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = int(os.environ.get("PORT", 10000))
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-    logger.info(f"Dummy web server {port}-portda ishga tushdi (Render health check uchun)")
-
 async def main():
     db_init()
-    cleanup_old_files(max_age_hours=1)  # boshlanishda bir marta tozalash
+    cleanup_old_files(max_age_hours=1)
     asyncio.create_task(periodic_cleanup())
-    asyncio.create_task(_start_dummy_web_server())
     logger.info("Bot ishga tushdi ✅")
     await dp.start_polling(bot)
 
