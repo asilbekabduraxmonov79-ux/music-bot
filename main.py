@@ -273,7 +273,7 @@ def _yt_extra_opts() -> dict:
     opts = {
         "extractor_args": {
             "youtube": {
-                "player_client": ["android", "web", "mweb"],
+                "player_client": ["android", "ios", "web", "mweb", "tv"],
             }
         },
     }
