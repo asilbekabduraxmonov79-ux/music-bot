@@ -15,12 +15,21 @@ import yt_dlp
 import aiohttp
 from aiohttp import web
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
+# ══════════════════════════════════════════════
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8684337468:AAH0DdUJZ0L90-aEcx7sFH0pFzsfiDTH__0")
 ADMIN_IDS = [5599261398]
 _DATA_DIR = Path(".")
 DOWNLOAD_DIR = _DATA_DIR / "downloads"
 DOWNLOAD_DIR.mkdir(exist_ok=True, parents=True)
 DB_PATH = str(_DATA_DIR / "bot.db")
+
+# Cookies fayl yo'llari
+COOKIES_PATHS = [
+    "/etc/secrets/youtube_cookies.txt",  # Render Secret File
+    "youtube_cookies.txt",                # GitHub'dagi fayl
+    "cookies.txt",                        # Umumiy nom
+]
+# ══════════════════════════════════════════════
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -32,6 +41,17 @@ dp.middleware.setup(LoggingMiddleware())
 search_cache = {}
 video_cache = {}
 URL_RE = re.compile(r"https?://\S+")
+
+def find_cookies_file() -> str:
+    """Cookies faylni topish"""
+    for path in COOKIES_PATHS:
+        if os.path.exists(path):
+            print(f"✅ Cookies fayl topildi: {path}")
+            return path
+    print("⚠️ Cookies fayl topilmadi!")
+    return None
+
+COOKIES_FILE = find_cookies_file()
 
 def db_init():
     con = sqlite3.connect(DB_PATH)
@@ -231,6 +251,9 @@ def search_songs(query: str, count: int = 10) -> list:
             }
         }
     }
+    if COOKIES_FILE:
+        ydl_opts["cookiefile"] = COOKIES_FILE
+    
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(f"ytsearch{count}:{query}", download=False)
         results = []
@@ -248,6 +271,7 @@ def search_songs(query: str, count: int = 10) -> list:
 def download_mp3(query: str, out_dir: Path) -> dict:
     is_url = query.startswith("http")
     search = query if is_url else f"ytsearch1:{query}"
+    
     ydl_opts = {
         "outtmpl": str(out_dir / "%(title)s.%(ext)s"),
         "format": "bestaudio[ext=m4a]/bestaudio/best",
@@ -270,6 +294,12 @@ def download_mp3(query: str, out_dir: Path) -> dict:
             }
         }
     }
+    
+    # Cookies qo'shish
+    if COOKIES_FILE:
+        ydl_opts["cookiefile"] = COOKIES_FILE
+        print(f"✅ Cookies ishlatilmoqda: {COOKIES_FILE}")
+    
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(search, download=True)
     if "entries" in info:
@@ -305,6 +335,11 @@ def download_video(url: str, out_dir: Path) -> str:
             }
         }
     }
+    
+    # Cookies qo'shish
+    if COOKIES_FILE:
+        ydl_opts["cookiefile"] = COOKIES_FILE
+    
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
         filename = ydl.prepare_filename(info)
@@ -440,12 +475,14 @@ async def h_url(message: types.Message):
             title = "Noma'lum"
             try:
                 vid_path = download_video(url, vid_dir)
+                print(f"✅ Video yuklandi: {vid_path}")
             except Exception as e:
                 logger.exception(f"Video yuklanmadi: {e}")
             try:
                 aud = download_mp3(url, aud_dir)
                 aud_path = aud["path"]
                 title = aud["title"]
+                print(f"✅ Audio yuklandi: {aud_path}")
             except Exception as e:
                 logger.exception(f"Audio yuklanmadi: {e}")
             if not vid_path and not aud_path:
