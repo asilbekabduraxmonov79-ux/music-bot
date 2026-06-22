@@ -23,12 +23,9 @@ DOWNLOAD_DIR = _DATA_DIR / "downloads"
 DOWNLOAD_DIR.mkdir(exist_ok=True, parents=True)
 DB_PATH = str(_DATA_DIR / "bot.db")
 
-# Cookies fayl yo'llari
-#COOKIES_PATHS = [
-#   "/etc/secrets/youtube_cookies.txt",  # Render Secret File
-#   "youtube_cookies.txt",                # GitHub'dagi fayl
-#  "cookies.txt",                        # Umumiy nom
-#]
+# Cookies O'CHIRILDI
+COOKIES_FILE = None
+print("⚠️ Cookies o'chirilgan rejimda ishlayapti")
 # ══════════════════════════════════════════════
 
 logging.basicConfig(level=logging.INFO)
@@ -41,17 +38,6 @@ dp.middleware.setup(LoggingMiddleware())
 search_cache = {}
 video_cache = {}
 URL_RE = re.compile(r"https?://\S+")
-
-def find_cookies_file() -> str:
-    """Cookies faylni topish"""
-    for path in COOKIES_PATHS:
-        if os.path.exists(path):
-            print(f"✅ Cookies fayl topildi: {path}")
-            return path
-    print("⚠️ Cookies fayl topilmadi!")
-    return None
-
-COOKIES_FILE = find_cookies_file()
 
 def db_init():
     con = sqlite3.connect(DB_PATH)
@@ -235,7 +221,6 @@ def fmt_duration(dur):
         return "?"
     return f"{dur // 60}:{dur % 60:02d}"
 
-# ==================== YANGILANGAN QIDIRUV ====================
 def search_songs(query: str, count: int = 10) -> list:
     ydl_opts = {
         "quiet": True,
@@ -252,8 +237,6 @@ def search_songs(query: str, count: int = 10) -> list:
             }
         }
     }
-    if COOKIES_FILE:
-        ydl_opts["cookiefile"] = COOKIES_FILE
     
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -274,7 +257,6 @@ def search_songs(query: str, count: int = 10) -> list:
         print(f"Qidiruv xatosi: {e}")
         return []
 
-# ==================== YANGILANGAN MP3 YUKLASH ====================
 def download_mp3(query: str, out_dir: Path) -> dict:
     is_url = query.startswith("http")
     search = query if is_url else f"ytsearch1:{query}"
@@ -302,10 +284,6 @@ def download_mp3(query: str, out_dir: Path) -> dict:
         }
     }
     
-    if COOKIES_FILE:
-        ydl_opts["cookiefile"] = COOKIES_FILE
-        print(f"✅ Cookies ishlatilmoqda: {COOKIES_FILE}")
-    
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(search, download=True)
@@ -327,7 +305,6 @@ def download_mp3(query: str, out_dir: Path) -> dict:
         print(f"MP3 yuklash xatosi: {e}")
         raise
 
-# ==================== YANGILANGAN VIDEO YUKLASH ====================
 def download_video(url: str, out_dir: Path) -> str:
     ydl_opts = {
         "outtmpl": str(out_dir / "%(title)s.%(ext)s"),
@@ -346,9 +323,6 @@ def download_video(url: str, out_dir: Path) -> str:
             }
         }
     }
-    
-    if COOKIES_FILE:
-        ydl_opts["cookiefile"] = COOKIES_FILE
     
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
