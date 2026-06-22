@@ -24,11 +24,11 @@ DOWNLOAD_DIR.mkdir(exist_ok=True, parents=True)
 DB_PATH = str(_DATA_DIR / "bot.db")
 
 # Cookies fayl yo'llari
-COOKIES_PATHS = [
-    "/etc/secrets/youtube_cookies.txt",  # Render Secret File
-    "youtube_cookies.txt",                # GitHub'dagi fayl
-    "cookies.txt",                        # Umumiy nom
-]
+#COOKIES_PATHS = [
+#   "/etc/secrets/youtube_cookies.txt",  # Render Secret File
+#   "youtube_cookies.txt",                # GitHub'dagi fayl
+#  "cookies.txt",                        # Umumiy nom
+#]
 # ══════════════════════════════════════════════
 
 logging.basicConfig(level=logging.INFO)
