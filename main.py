@@ -23,7 +23,6 @@ DOWNLOAD_DIR = _DATA_DIR / "downloads"
 DOWNLOAD_DIR.mkdir(exist_ok=True, parents=True)
 DB_PATH = str(_DATA_DIR / "bot.db")
 
-# Logging sozlamalari
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -32,7 +31,6 @@ dp = Dispatcher(bot)
 dp.middleware.setup(LoggingMiddleware())
 
 search_cache = {}
-video_cache = {}
 URL_RE = re.compile(r"https?://\S+")
 
 # ==================== DATABASE ====================
@@ -218,34 +216,43 @@ async def guard(message: types.Message) -> bool:
 
 # ==================== YOUTUBE FUNKSIYALARI ====================
 def search_songs(query: str, count: int = 10) -> list:
-    """YouTube dan qo'shiq qidirish"""
+    """YouTube dan qo'shiq qidirish - SODDA USUL"""
     ydl_opts = {
         "quiet": True,
+        "no_warnings": True,
         "extract_flat": True,
+        "noplaylist": True,
         "http_headers": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        },
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android"],
+                "skip": ["hls", "dash"],
+            }
         }
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(f"ytsearch{count}:{query}", download=False)
             results = []
-            for entry in info.get("entries", []):
-                if entry:
-                    dur = entry.get("duration", 0)
-                    results.append({
-                        "title": entry.get("title", "Noma'lum"),
-                        "url": f"https://youtube.com/watch?v={entry.get('id', '')}",
-                        "duration": dur,
-                        "duration_str": f"{dur//60}:{dur%60:02d}" if dur else "?",
-                    })
+            if info and 'entries' in info:
+                for entry in info['entries']:
+                    if entry:
+                        dur = entry.get('duration', 0)
+                        results.append({
+                            "title": entry.get('title', 'Noma\'lum'),
+                            "url": f"https://youtube.com/watch?v={entry.get('id', '')}",
+                            "duration": dur,
+                            "duration_str": f"{dur//60}:{dur%60:02d}" if dur else "?",
+                        })
             return results
     except Exception as e:
         print(f"Qidiruv xatosi: {e}")
         return []
 
 def download_audio(url: str, out_dir: Path) -> str:
-    """YouTube dan audio yuklash"""
+    """YouTube dan audio yuklash - SODDA USUL"""
     ydl_opts = {
         "outtmpl": str(out_dir / "%(title)s.%(ext)s"),
         "format": "bestaudio/best",
@@ -255,8 +262,16 @@ def download_audio(url: str, out_dir: Path) -> str:
             "preferredquality": "192",
         }],
         "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
         "http_headers": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        },
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android"],
+                "skip": ["hls", "dash"],
+            }
         }
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -265,13 +280,21 @@ def download_audio(url: str, out_dir: Path) -> str:
         return str(Path(filename).with_suffix(".mp3"))
 
 def download_video(url: str, out_dir: Path) -> str:
-    """YouTube dan video yuklash"""
+    """YouTube dan video yuklash - SODDA USUL"""
     ydl_opts = {
         "outtmpl": str(out_dir / "%(title)s.%(ext)s"),
         "format": "best[height<=480][ext=mp4]/best",
         "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
         "http_headers": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        },
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android"],
+                "skip": ["hls", "dash"],
+            }
         }
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -290,8 +313,9 @@ def download_instagram(url: str, out_dir: Path) -> str:
         "outtmpl": str(out_dir / "%(title)s.%(ext)s"),
         "format": "best",
         "quiet": True,
+        "no_warnings": True,
         "http_headers": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         }
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -306,7 +330,7 @@ def download_instagram(url: str, out_dir: Path) -> str:
 
 # ==================== AUDIO RECOGNITION ====================
 async def recognize_audio(file_path: str) -> dict:
-    """Audio fayldan qo'shiq nomini aniqlash (Shazam)"""
+    """Audio fayldan qo'shiq nomini aniqlash"""
     try:
         url = "https://api.audd.io/"
         with open(file_path, "rb") as f:
@@ -321,7 +345,6 @@ async def recognize_audio(file_path: str) -> dict:
             return {
                 "title": r.get("title", ""),
                 "artist": r.get("artist", ""),
-                "album": r.get("album", ""),
             }
     except Exception as e:
         print(f"Recognition xatosi: {e}")
@@ -415,8 +438,8 @@ async def h_text(message: types.Message):
             await message.answer("Yuklab olish turini tanlang:", reply_markup=InlineKeyboardMarkup(btns))
             return
     
-    # Qo'shiq qidirish (10 ta natija)
-    msg = await message.answer(f"🔍 '{text}' qidirilmoqda...")
+    # Qo'shiq qidirish
+    msg = await message.answer(f"🔍 '<b>{text}</b>' qidirilmoqda...", parse_mode=ParseMode.HTML)
     try:
         results = search_songs(text, count=10)
         if not results:
@@ -427,7 +450,6 @@ async def h_text(message: types.Message):
         for i, r in enumerate(results, start=1):
             lines.append(f"{i}. {r['title']}  <i>{r['duration_str']}</i>")
         
-        # Tugmalar (10 ta raqam)
         kb = InlineKeyboardMarkup(row_width=5)
         btns = []
         for i in range(1, len(results) + 1):
@@ -438,10 +460,6 @@ async def h_text(message: types.Message):
         if btns:
             kb.row(*btns)
         kb.row(InlineKeyboardButton("❌ Yopish", callback_data="nav_close"))
-        
-        # Keyingi sahifa tugmasi (agar 10 ta bo'lsa)
-        if len(results) == 10:
-            kb.row(InlineKeyboardButton("➡️ Keyingi 10 ta", callback_data="next_10"))
         
         await msg.edit_text("\n".join(lines), reply_markup=kb, parse_mode=ParseMode.HTML)
         search_cache[uid] = results
@@ -475,54 +493,6 @@ async def cb_download(callback_query: types.CallbackQuery):
             with open(aud, 'rb') as f:
                 await callback_query.message.answer_audio(f)
             await msg.delete()
-    except Exception as e:
-        await msg.edit_text(f"❌ Xato: {str(e)[:100]}")
-
-@dp.callback_query_handler(lambda c: c.data == "next_10")
-async def cb_next_10(callback_query: types.CallbackQuery):
-    """Keyingi 10 ta natija"""
-    uid = callback_query.from_user.id
-    await callback_query.answer("🔍 Qidirilmoqda...")
-    
-    # Eski natijalardan keyingi qismni olish
-    old_results = search_cache.get(uid, [])
-    if not old_results:
-        await callback_query.answer("❌ Natija yo'q!", show_alert=True)
-        return
-    
-    # Yangi qidiruv
-    query = old_results[0].get('query', '')
-    if not query:
-        await callback_query.answer("❌ Xato!", show_alert=True)
-        return
-    
-    msg = await callback_query.message.answer(f"🔍 '{query}' qidirilmoqda...")
-    try:
-        results = search_songs(query, count=20)  # 20 ta natija
-        if not results:
-            await msg.edit_text("❌ Qo'shiq topilmadi.")
-            return
-        
-        # Natijalarni saqlash
-        search_cache[uid] = results
-        
-        lines = [f"🔍 <b>{query}</b>\n"]
-        for i, r in enumerate(results, start=1):
-            lines.append(f"{i}. {r['title']}  <i>{r['duration_str']}</i>")
-        
-        kb = InlineKeyboardMarkup(row_width=5)
-        btns = []
-        for i in range(1, len(results) + 1):
-            btns.append(InlineKeyboardButton(text=str(i), callback_data=f"dl_{i-1}"))
-            if len(btns) == 5:
-                kb.row(*btns)
-                btns = []
-        if btns:
-            kb.row(*btns)
-        kb.row(InlineKeyboardButton("❌ Yopish", callback_data="nav_close"))
-        
-        await msg.edit_text("\n".join(lines), reply_markup=kb, parse_mode=ParseMode.HTML)
-        
     except Exception as e:
         await msg.edit_text(f"❌ Xato: {str(e)[:100]}")
 
