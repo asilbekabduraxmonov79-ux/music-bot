@@ -16,7 +16,7 @@ import aiohttp
 from aiohttp import web
 
 # ==================== SOZLAMALAR ====================
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8684337468:AAH0DdUJZ0L90-aEcx7sFH0pFzsfiDTH__0")
 ADMIN_IDS = [5599261398]
 _DATA_DIR = Path(".")
 DOWNLOAD_DIR = _DATA_DIR / "downloads"
