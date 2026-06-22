@@ -15,18 +15,12 @@ import yt_dlp
 import aiohttp
 from aiohttp import web
 
-# ══════════════════════════════════════════════
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8684337468:AAH0DdUJZ0L90-aEcx7sFH0pFzsfiDTH__0")
 ADMIN_IDS = [5599261398]
 _DATA_DIR = Path(".")
 DOWNLOAD_DIR = _DATA_DIR / "downloads"
 DOWNLOAD_DIR.mkdir(exist_ok=True, parents=True)
 DB_PATH = str(_DATA_DIR / "bot.db")
-
-# Cookies O'CHIRILDI
-COOKIES_FILE = None
-print("⚠️ Cookies o'chirilgan rejimda ishlayapti")
-# ══════════════════════════════════════════════
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -39,6 +33,7 @@ search_cache = {}
 video_cache = {}
 URL_RE = re.compile(r"https?://\S+")
 
+# ==================== DATABASE ====================
 def db_init():
     con = sqlite3.connect(DB_PATH)
     con.execute("""CREATE TABLE IF NOT EXISTS required_channels (
@@ -186,6 +181,7 @@ def db_next_movie_code():
         n += 1
     return str(n)
 
+# ==================== SUBSCRIPTION ====================
 async def check_subs(uid):
     not_joined = []
     for ch_id, name, link in db_get_channels():
@@ -212,6 +208,7 @@ async def guard(message: types.Message) -> bool:
         return False
     return True
 
+# ==================== YOUTUBE FUNCTIONS ====================
 def fmt_duration(dur):
     if not dur:
         return "?"
@@ -232,8 +229,9 @@ def search_songs(query: str, count: int = 10) -> list:
         },
         "extractor_args": {
             "youtube": {
-                "player_client": ["android", "web"],
+                "player_client": ["android", "web", "ios"],
                 "skip": ["hls", "dash"],
+                "player_skip": ["configs", "webpage"],
             }
         }
     }
@@ -278,8 +276,9 @@ def download_mp3(query: str, out_dir: Path) -> dict:
         },
         "extractor_args": {
             "youtube": {
-                "player_client": ["android", "web"],
+                "player_client": ["android", "web", "ios"],
                 "skip": ["hls", "dash"],
+                "player_skip": ["configs", "webpage"],
             }
         }
     }
@@ -306,6 +305,8 @@ def download_mp3(query: str, out_dir: Path) -> dict:
         raise
 
 def download_video(url: str, out_dir: Path) -> str:
+    is_instagram = 'instagram.com' in url
+    
     ydl_opts = {
         "outtmpl": str(out_dir / "%(title)s.%(ext)s"),
         "merge_output_format": "mp4",
@@ -314,15 +315,20 @@ def download_video(url: str, out_dir: Path) -> str:
         "noplaylist": True,
         "http_headers": {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-        },
-        "format": "best[height<=480][ext=mp4]/best[ext=mp4]/best",
-        "extractor_args": {
-            "youtube": {
-                "player_client": ["android", "web"],
-                "skip": ["hls", "dash"],
-            }
         }
     }
+    
+    if is_instagram:
+        ydl_opts["format"] = "best"
+    else:
+        ydl_opts["format"] = "bestvideo[ext=mp4][height<=480]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+        ydl_opts["extractor_args"] = {
+            "youtube": {
+                "player_client": ["android", "web", "ios"],
+                "skip": ["hls", "dash"],
+                "player_skip": ["configs", "webpage"],
+            }
+        }
     
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -355,12 +361,14 @@ async def recognize_audio(file_path: str) -> dict:
         print(f"Audio recognition xatosi: {e}")
     return {}
 
+# ==================== ADMIN ====================
 def is_owner(uid): return uid in ADMIN_IDS
 def is_admin(uid): return uid in ADMIN_IDS or db_is_sub_admin(uid)
 
 admin_movie_state = {}
 admin_pending_action = {}
 
+# ==================== HANDLERS ====================
 @dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
     db_add_user(message.from_user.id, message.from_user.username or "")
@@ -371,7 +379,7 @@ async def cmd_start(message: types.Message):
     await message.answer(
         "👋 <b>Salom!</b>\n\n"
         "🎵 Qo'shiq/xonanda nomi yozing → MP3\n"
-        "🔗 YouTube link yuboring → Video + Audio\n"
+        "🔗 YouTube/Instagram link yuboring → Video + Audio\n"
         "🎤 Audio/video yuboring → Qo'shiqni aniqlaydi"
     )
 
@@ -556,6 +564,7 @@ async def h_audio(message: types.Message):
         logger.exception(e)
         await msg.edit_text("❌ Xatolik.")
 
+# ==================== CALLBACKS ====================
 @dp.callback_query_handler(lambda c: c.data.startswith("dl_"))
 async def cb_download(callback_query: types.CallbackQuery):
     uid = callback_query.from_user.id
@@ -776,9 +785,7 @@ async def h_admin_numeric(message: types.Message):
             await message.answer(f"🛡 Foydalanuvchi <code>{target}</code> yordamchi admin.")
         return
 
-# ══════════════════════════════════════════════
-# Render uchun web server (port binding)
-# ══════════════════════════════════════════════
+# ==================== WEB SERVER ====================
 async def start_web_server():
     try:
         app = web.Application()
@@ -795,6 +802,7 @@ async def start_web_server():
     except Exception as e:
         print(f"⚠️ Web server ishga tushmadi: {e}")
 
+# ==================== MAIN ====================
 if __name__ == "__main__":
     db_init()
     logger.info("Bot ishga tushdi ✅")
