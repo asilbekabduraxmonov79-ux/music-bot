@@ -16,7 +16,7 @@ import aiohttp
 from aiohttp import web
 
 # ══════════════════════════════════════════════
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8684337468:AAH0DdUJZ0L90-aEcx7sFH0pFzsfiDTH__0")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 ADMIN_IDS = [5599261398]
 _DATA_DIR = Path(".")
 DOWNLOAD_DIR = _DATA_DIR / "downloads"
@@ -235,6 +235,7 @@ def fmt_duration(dur):
         return "?"
     return f"{dur // 60}:{dur % 60:02d}"
 
+# ==================== YANGILANGAN QIDIRUV ====================
 def search_songs(query: str, count: int = 10) -> list:
     ydl_opts = {
         "quiet": True,
@@ -242,7 +243,7 @@ def search_songs(query: str, count: int = 10) -> list:
         "noplaylist": True,
         "extract_flat": True,
         "http_headers": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
         },
         "extractor_args": {
             "youtube": {
@@ -254,20 +255,26 @@ def search_songs(query: str, count: int = 10) -> list:
     if COOKIES_FILE:
         ydl_opts["cookiefile"] = COOKIES_FILE
     
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(f"ytsearch{count}:{query}", download=False)
-        results = []
-        for entry in info.get("entries", []):
-            vid_id = entry.get("id", "")
-            url = entry.get("url") or f"https://www.youtube.com/watch?v={vid_id}"
-            results.append({
-                "title": entry.get("title", "Noma'lum"),
-                "url": url,
-                "duration": entry.get("duration") or 0,
-                "uploader": entry.get("uploader", ""),
-            })
-        return results
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(f"ytsearch{count}:{query}", download=False)
+            results = []
+            for entry in info.get("entries", []):
+                if entry:
+                    vid_id = entry.get("id", "")
+                    url = entry.get("url") or f"https://www.youtube.com/watch?v={vid_id}"
+                    results.append({
+                        "title": entry.get("title", "Noma'lum"),
+                        "url": url,
+                        "duration": entry.get("duration") or 0,
+                        "uploader": entry.get("uploader", ""),
+                    })
+            return results
+    except Exception as e:
+        print(f"Qidiruv xatosi: {e}")
+        return []
 
+# ==================== YANGILANGAN MP3 YUKLASH ====================
 def download_mp3(query: str, out_dir: Path) -> dict:
     is_url = query.startswith("http")
     search = query if is_url else f"ytsearch1:{query}"
@@ -285,7 +292,7 @@ def download_mp3(query: str, out_dir: Path) -> dict:
         "no_warnings": True,
         "noplaylist": True,
         "http_headers": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
         },
         "extractor_args": {
             "youtube": {
@@ -295,28 +302,32 @@ def download_mp3(query: str, out_dir: Path) -> dict:
         }
     }
     
-    # Cookies qo'shish
     if COOKIES_FILE:
         ydl_opts["cookiefile"] = COOKIES_FILE
         print(f"✅ Cookies ishlatilmoqda: {COOKIES_FILE}")
     
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(search, download=True)
-    if "entries" in info:
-        info = info["entries"][0]
-    filename = ydl.prepare_filename(info)
-    mp3 = str(Path(filename).with_suffix(".mp3"))
-    if not Path(mp3).exists():
-        for f in Path(out_dir).glob("*.mp3"):
-            mp3 = str(f)
-            break
-    return {
-        "title": info.get("title", "Noma'lum"),
-        "artist": info.get("uploader", ""),
-        "duration": info.get("duration", 0),
-        "path": mp3,
-    }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(search, download=True)
+        if "entries" in info:
+            info = info["entries"][0]
+        filename = ydl.prepare_filename(info)
+        mp3 = str(Path(filename).with_suffix(".mp3"))
+        if not Path(mp3).exists():
+            for f in Path(out_dir).glob("*.mp3"):
+                mp3 = str(f)
+                break
+        return {
+            "title": info.get("title", "Noma'lum"),
+            "artist": info.get("uploader", ""),
+            "duration": info.get("duration", 0),
+            "path": mp3,
+        }
+    except Exception as e:
+        print(f"MP3 yuklash xatosi: {e}")
+        raise
 
+# ==================== YANGILANGAN VIDEO YUKLASH ====================
 def download_video(url: str, out_dir: Path) -> str:
     ydl_opts = {
         "outtmpl": str(out_dir / "%(title)s.%(ext)s"),
@@ -325,7 +336,7 @@ def download_video(url: str, out_dir: Path) -> str:
         "no_warnings": True,
         "noplaylist": True,
         "http_headers": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
         },
         "format": "best[height<=480][ext=mp4]/best[ext=mp4]/best",
         "extractor_args": {
@@ -336,32 +347,38 @@ def download_video(url: str, out_dir: Path) -> str:
         }
     }
     
-    # Cookies qo'shish
     if COOKIES_FILE:
         ydl_opts["cookiefile"] = COOKIES_FILE
     
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        filename = ydl.prepare_filename(info)
-        mp4 = str(Path(filename).with_suffix(".mp4"))
-        if not Path(mp4).exists():
-            for f in Path(out_dir).glob("*.mp4"):
-                mp4 = str(f)
-                break
-        return mp4
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info)
+            mp4 = str(Path(filename).with_suffix(".mp4"))
+            if not Path(mp4).exists():
+                for f in Path(out_dir).glob("*.mp4"):
+                    mp4 = str(f)
+                    break
+            return mp4
+    except Exception as e:
+        print(f"Video yuklash xatosi: {e}")
+        raise
 
 async def recognize_audio(file_path: str) -> dict:
     url = "https://api.audd.io/"
-    with open(file_path, "rb") as f:
-        data = aiohttp.FormData()
-        data.add_field("api_token", "test")
-        data.add_field("file", f, filename="audio.mp3", content_type="audio/mpeg")
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, data=data) as resp:
-                result = await resp.json()
-    if result.get("status") == "success" and result.get("result"):
-        r = result["result"]
-        return {"title": r.get("title", ""), "artist": r.get("artist", "")}
+    try:
+        with open(file_path, "rb") as f:
+            data = aiohttp.FormData()
+            data.add_field("api_token", "test")
+            data.add_field("file", f, filename="audio.mp3", content_type="audio/mpeg")
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, data=data) as resp:
+                    result = await resp.json()
+        if result.get("status") == "success" and result.get("result"):
+            r = result["result"]
+            return {"title": r.get("title", ""), "artist": r.get("artist", "")}
+    except Exception as e:
+        print(f"Audio recognition xatosi: {e}")
     return {}
 
 def is_owner(uid): return uid in ADMIN_IDS
